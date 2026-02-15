@@ -55,9 +55,7 @@ class SquarePosition:
     def to_translation(self):
         return self.row,self.col
     def add_translation(self,translation : tuple):
-        self.row += translation[0]
-        self.col += translation[1]
-        return self
+        return SquarePosition(row=self.row+translation[0],col=self.col+translation[1])
 
     def __repr__(self):
         return self.to_notation()
@@ -96,6 +94,8 @@ class ChessPiece:
         self.position: SquarePosition | None = position
         self.type = piece_type
         self.legal_moves: set[SquarePosition] = set()
+        self.controlled_squares: set[SquarePosition] = set()
+        self.player = PLAYERS[color] if PLAYERS else None
 
 
     def die(self):
@@ -105,7 +105,7 @@ class ChessPiece:
         self.legal_moves.clear()
 
     def is_valid_move(self, new_position: SquarePosition) -> bool:
-        return new_position in self.legal_moves
+        return new_position in self.legal_moves and not self.player.is_in_check
 
     def is_captureable(self, target):
         return target.color != self.color
@@ -131,6 +131,9 @@ def add_sliding_moves(piece: ChessPiece, board, directions):
         c = start_c + dc
         while 0 <= r < 8 and 0 <= c < 8:
             target = board.grid[r][c]
+
+            piece.controlled_squares.add(SquarePosition(row=r, col=c))  # Mark this square as controlled regardless of occupancy
+
             if target is None:
                 piece.legal_moves.add(SquarePosition(row=r, col=c))
             else:
@@ -139,6 +142,9 @@ def add_sliding_moves(piece: ChessPiece, board, directions):
                 break
             r += dr
             c += dc
+
+
+# Inside Pawn class
 
 def add_single_move(piece: ChessPiece,board,directions):
     if piece.position is None:
@@ -150,10 +156,13 @@ def add_single_move(piece: ChessPiece,board,directions):
     for dr,dc in directions:
         r = start_r + dr
         c = start_c + dc
+
         if 0 <= r < 8 and 0 <= c < 8:
+            pos = SquarePosition(row=r, col=c)
             target = board.grid[r][c]
+            piece.controlled_squares.add(pos)
             if target is None or target.color != piece.color:
-                piece.legal_moves.add(SquarePosition(row=r, col=c))
+                piece.legal_moves.add(pos)
 
 
 
@@ -168,6 +177,7 @@ class Pawn(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+        self.controlled_squares.clear()
         if self.position is None or board is None:
             return
 
@@ -194,15 +204,18 @@ class Pawn(ChessPiece):
             cap_row = row + direction
             cap_col = col + dc
             if 0 <= cap_row < 8 and 0 <= cap_col < 8:
+                pos = SquarePosition(row=cap_row, col=cap_col)
+                self.controlled_squares.add(pos)
                 target = board.grid[cap_row][cap_col]
                 if self.is_captureable(target):
-                    self.legal_moves.add(SquarePosition(row=cap_row, col=cap_col))
+                    self.legal_moves.add(pos)
 
 class Knight(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.KNIGHT)
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+        self.controlled_squares.clear()
         if self.position is None or board is None:
             return
 
@@ -222,6 +235,7 @@ class Rook(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+        self.controlled_squares.clear()
         if self.position is None or board is None:
             return
 
@@ -240,6 +254,8 @@ class Bishop(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+        self.controlled_squares.clear()
+
         if self.position is None or board is None:
             return
 
@@ -258,6 +274,8 @@ class Queen(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+        self.controlled_squares.clear()
+
         if self.position is None or board is None:
             return
 
@@ -273,28 +291,56 @@ class King(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+        self.controlled_squares.clear()
+
+        if self.position is None:
+            return
 
         directions = [
-            (-1, 0), (1, 0), (0, -1), (0, 1),  # rook-like
-            (-1, -1), (-1, 1), (1, -1), (1, 1),  # bishop-like
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
         ]
-        curr_pos = self.position.to_translation()
-        for adder in directions:
-            r = curr_pos[0] + adder[0]
-            c = curr_pos[1] + adder[1]
+
+        enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
+
+        for dr, dc in directions:
+            r = self.position.row + dr
+            c = self.position.col + dc
+
             if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
                 pos = SquarePosition(row=r, col=c)
+                self.controlled_squares.add(pos)
 
-                if PLAYERS.get(OTHER_COLOR.get(self.color)) is not None and  PLAYERS.get(OTHER_COLOR.get(self.color)).is_controlling_square(pos):
+                # 1. Check if the square is attacked by ANY enemy piece
+                if enemy_player.is_controlling_square(pos):
                     continue
 
                 target = board.grid[r][c]
 
+                # 2. Basic movement / capture logic
                 if target is None:
                     self.legal_moves.add(pos)
                 else:
+                    # Capture only if it's an enemy AND not protected
                     if target.color != self.color:
-                        self.legal_moves.add(pos)
+                        # Crucial: Check if the enemy piece is protected
+                        if not self.is_piece_protected(board, pos, enemy_player):
+                            self.legal_moves.add(pos)
+
+    def is_piece_protected(self, board, pos, enemy_player):
+        """
+        Determines if an enemy piece at 'pos' is defended by another enemy piece.
+        """
+        # In a simple engine, we can check if the enemy player
+        # 'controls' the square their own piece is standing on.
+        return enemy_player.is_controlling_square(pos)
+
+    def has_valid_moves(self):
+        return self.legal_moves
+
+    def is_valid_move(self, new_position: SquarePosition) -> bool:
+        return new_position in self.legal_moves
+
 
 
 
@@ -319,27 +365,34 @@ def create_piece_from_fen(char: str, position: SquarePosition):
 # <editor-fold desc="BOARD AND PLAYER">
 
 class Player:
-    def __init__(self,board,color):
+    def __init__(self, board, color):
         self.board = board
         self.color = color
-        self.pieces = [p for p in board.get_all_pieces() if p.color == color]
-
+        self.pieces = []
         self.controlled_squares = set()
-        self.updated_all_controlled_squares()
+        self.is_in_check = False
+        self.is_in_checkmate = False
+        self.king = None
+        # Do not calculate here, wait for board to load
+
+    def refresh_pieces(self):
+        """Finds my pieces on the current board grid."""
+        self.pieces = [p for p in self.board.get_all_pieces() if p.color == self.color]
+        self.king = tuple(filter(lambda p: p.type == ChessPieceType.KING, self.pieces))[0]
 
 
-    def updated_all_controlled_squares(self):
+    def update_controlled_squares(self):
+        """Calculates all squares my pieces are attacking."""
         self.controlled_squares.clear()
         for piece in self.pieces:
-            for square in piece.legal_moves:
-                if not square in self.controlled_squares:
-                    self.controlled_squares.add(square)
+            # Kings need legal moves to move, but their "control" is just their basic move set.
+            # To avoid recursion, we can just use the piece's current legal moves
+            # (assuming they were updated before calling this).
+            for square in piece.controlled_squares:
+                self.controlled_squares.add(square)
 
-    def is_controlling_square(self,square_position:SquarePosition) -> bool:
+    def is_controlling_square(self, square_position: SquarePosition) -> bool:
         return square_position in self.controlled_squares
-
-
-
 
 
 class Board:
@@ -365,9 +418,6 @@ class Board:
 
         piece_data, active, castling, en_passant, halfmove, fullmove = parts
         rows = piece_data.split('/')
-        if len(rows) != 8:
-            raise ValueError("Invalid FEN rows")
-
         for row_index, row in enumerate(rows):
             col = 0
             for ch in row:
@@ -385,8 +435,7 @@ class Board:
         self.halfmove_clock = int(halfmove)
         self.fullmove_number = int(fullmove)
 
-        for piece in self.get_all_pieces():
-            piece.update_all_legal_moves(self)
+        self.update_game_state()
 
     def get_piece_at(self, position: SquarePosition) -> ChessPiece | None:
         return self.grid[position.row][position.col]
@@ -394,8 +443,62 @@ class Board:
     def get_all_pieces(self):
         return [p for row in self.grid for p in row if p is not None]
 
+    def update_game_state(self):
+        """
+        Updates moves in a strict order to handle King safety:
+        1. Refresh Player piece lists.
+        2. Calculate moves for all NON-KING pieces.
+        3. Update Player 'controlled squares' based on those moves.
+        4. Calculate moves for KINGS (checking controlled squares).
+        """
+        # 1. Refresh piece ownership
+        if PLAYERS:
+            for p in PLAYERS.values():
+                p.refresh_pieces()
+
+        # 2. Update moves for Non-Kings (Sliding, Knights, Pawns)
+        all_pieces = self.get_all_pieces()
+        for p in all_pieces:
+            if p.type != ChessPieceType.KING:
+                p.update_all_legal_moves(self)
+
+        # 3. Update Controlled Squares
+        if PLAYERS:
+            for p in PLAYERS.values():
+                p.update_controlled_squares()
+
+        # 4. Update moves for Kings (Now they can see attacked squares)
+
+        # Inside Board.update_game_state
+        for player in PLAYERS.values():
+            player.king.update_all_legal_moves(self)
+
+            # 1. Is the king currently under attack?
+            enemy_player = PLAYERS.get(OTHER_COLOR.get(player.color))
+            player.is_in_check = enemy_player.is_controlling_square(player.king.position)
+
+            # 2. Checkmate detection
+            if player.is_in_check:
+                # Check if ANY piece has ANY legal move.
+                # Note: True chess logic requires ensuring the move actually resolves the check.
+                has_any_escape = False
+                for piece in player.pieces:
+                    if piece.legal_moves:  # If at least one piece can move somewhere
+                        has_any_escape = True
+                        break
+
+                player.is_in_checkmate = not has_any_escape
+            else:
+                player.is_in_checkmate = False
+
+            if player.is_in_checkmate:
+                print(f"CHECKMATE! {OTHER_COLOR.get(player.color).value} wins!")
+
+
+
     def update_all_pieces_legal_moves(self):
-         [p.update_all_legal_moves(self) for row in self.grid for p in row if p is not None]
+        # Redirect to the safe update method
+        self.update_game_state()
 
     def move_piece(self, from_pos: SquarePosition, to_pos: SquarePosition):
         piece = self.grid[from_pos.row][from_pos.col]
@@ -403,8 +506,6 @@ class Board:
             raise ValueError("No piece at source position")
 
         target = self.grid[to_pos.row][to_pos.col]
-        if target is not None and target.color == piece.color:
-            raise ValueError("Cannot move onto your own piece")
 
         # capture
         if target is not None:
@@ -414,18 +515,17 @@ class Board:
         self.grid[to_pos.row][to_pos.col] = piece
         self.grid[from_pos.row][from_pos.col] = None
         piece.position = SquarePosition(row=to_pos.row, col=to_pos.col)
-        piece.update_all_legal_moves(self)
 
-        self.update_all_pieces_legal_moves()
+        # Update everything
+        self.update_game_state()
         self.switch_turn()
-
-
-
 
     def switch_turn(self):
         self.active_color = ChessColor.BLACK if self.active_color == ChessColor.WHITE else ChessColor.WHITE
 
+    # ... (Keep create_fen as it was)
     def create_fen(self) -> str:
+        # ... [Your existing create_fen code] ...
         fen_rows = []
         for row in range(8):
             empty = 0
@@ -451,6 +551,8 @@ class Board:
         castling = self.castling_rights or "-"
         en_passant = self.en_passant or "-"
         return f"{placement} {active} {castling} {en_passant} {self.halfmove_clock} {self.fullmove_number}"
+
+
 # </editor-fold>
 
 
@@ -498,9 +600,15 @@ def draw_pieces(screen, board: Board, cache):
 PYGAME = pygame
 SCREEN = None
 
+# Initialize dict first to avoid NameError if Board tries to access it
+PLAYERS = {}
+
 BOARD = Board()
-PLAYERS: dict[ChessColor:Player] = {ChessColor.WHITE: Player(BOARD, ChessColor.WHITE),
-                                        ChessColor.BLACK: Player(BOARD, ChessColor.BLACK)}
+
+# Now populate Players
+PLAYERS[ChessColor.WHITE] = Player(BOARD, ChessColor.WHITE)
+PLAYERS[ChessColor.BLACK] = Player(BOARD, ChessColor.BLACK)
+
 IMAGE_CACHE = {}
 
 
