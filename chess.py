@@ -8,6 +8,8 @@ SQUARE_SIZE = 80
 WINDOW_SIZE = BOARD_SIZE * SQUARE_SIZE
 FPS = 60
 
+STARTING_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
 LIGHT = (240, 217, 181)
 DARK  = (181, 136, 99)
 # </editor-fold>
@@ -30,6 +32,7 @@ def pixel_to_squarepos(mouse_pos):
     if 0 <= col < 8 and 0 <= row < 8:
         return SquarePosition(row=row, col=col)
     return None
+
 
 
 # </editor-fold>
@@ -72,6 +75,10 @@ class ChessColor(Enum):
     WHITE = "WHITE"
     BLACK = "BLACK"
 
+OTHER_COLOR = {ChessColor.WHITE:ChessColor.BLACK,ChessColor.BLACK:ChessColor.WHITE}
+
+
+
 class ChessPieceType(Enum):
     PAWN   = "P"
     ROOK   = "R"
@@ -89,6 +96,7 @@ class ChessPiece:
         self.position: SquarePosition | None = position
         self.type = piece_type
         self.legal_moves: set[SquarePosition] = set()
+
 
     def die(self):
         self.position = None
@@ -274,30 +282,19 @@ class King(ChessPiece):
         for adder in directions:
             r = curr_pos[0] + adder[0]
             c = curr_pos[1] + adder[1]
-            if 0 <= r < 8 and 0 <= c < 8:
+            if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                pos = SquarePosition(row=r, col=c)
+
+                if PLAYERS.get(OTHER_COLOR.get(self.color)) is not None and  PLAYERS.get(OTHER_COLOR.get(self.color)).is_controlling_square(pos):
+                    continue
+
                 target = board.grid[r][c]
+
                 if target is None:
-                    self.legal_moves.add(SquarePosition(row=r, col=c))
+                    self.legal_moves.add(pos)
                 else:
                     if target.color != self.color:
-                        self.legal_moves.add(SquarePosition(row=r, col=c))
-
-
-
-class Player:
-    def __init__(self,board,color):
-        self.board = board
-        self.color = color
-        self.pieces = list(filter(lambda c: c == color,board.get_all_pieces()))
-        self.controlled_squares = set()
-        self.updated_all_controlled_squares()
-
-
-    def updated_all_controlled_squares(self):
-        self.controlled_squares.clear()
-        for piece in self.pieces:
-            for square in piece.legal_moves:
-                self.controlled_squares.add(square)
+                        self.legal_moves.add(pos)
 
 
 
@@ -319,7 +316,32 @@ def create_piece_from_fen(char: str, position: SquarePosition):
 # </editor-fold>
 
 
-# <editor-fold desc="BOARD">
+# <editor-fold desc="BOARD AND PLAYER">
+
+class Player:
+    def __init__(self,board,color):
+        self.board = board
+        self.color = color
+        self.pieces = [p for p in board.get_all_pieces() if p.color == color]
+
+        self.controlled_squares = set()
+        self.updated_all_controlled_squares()
+
+
+    def updated_all_controlled_squares(self):
+        self.controlled_squares.clear()
+        for piece in self.pieces:
+            for square in piece.legal_moves:
+                if not square in self.controlled_squares:
+                    self.controlled_squares.add(square)
+
+    def is_controlling_square(self,square_position:SquarePosition) -> bool:
+        return square_position in self.controlled_squares
+
+
+
+
+
 class Board:
     def __init__(self, fen: str = None):
         self.grid: list[list[ChessPiece | None]] = [[None for _ in range(8)] for _ in range(8)]
@@ -333,7 +355,7 @@ class Board:
             self.load_fen(fen)
 
     def clear(self):
-        self.grid = [[None for _ in range(8)] for _ in range(8)]
+        self.grid = [[None for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
 
     def load_fen(self, fen: str):
         self.clear()
@@ -475,23 +497,29 @@ def draw_pieces(screen, board: Board, cache):
 # <editor-fold desc="GLOBAL VARIABLES">
 PYGAME = pygame
 SCREEN = None
-BOARD = None
+
+BOARD = Board()
+PLAYERS: dict[ChessColor:Player] = {ChessColor.WHITE: Player(BOARD, ChessColor.WHITE),
+                                        ChessColor.BLACK: Player(BOARD, ChessColor.BLACK)}
 IMAGE_CACHE = {}
 
-WHITE_PLA
+
+
 # </editor-fold>
 
 
 # <editor-fold desc="MAIN">
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE
+    global SCREEN, BOARD, IMAGE_CACHE,WHITE_PLAYER,BLACK_PLAYER,PLAYERS
 
     pygame.init()
     SCREEN = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
     pygame.display.set_caption("Chess")
     clock = pygame.time.Clock()
-    BOARD = Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    BOARD.load_fen(STARTING_POSITION)
     IMAGE_CACHE = {}
+
+
 
     picking_piece: ChessPiece | None = None
 
