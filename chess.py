@@ -30,6 +30,8 @@ def pixel_to_squarepos(mouse_pos):
     if 0 <= col < 8 and 0 <= row < 8:
         return SquarePosition(row=row, col=col)
     return None
+
+
 # </editor-fold>
 
 
@@ -46,6 +48,13 @@ class SquarePosition:
 
     def to_notation(self) -> str:
         return row_col_to_notation(self.row, self.col)
+
+    def to_translation(self):
+        return self.row,self.col
+    def add_translation(self,translation : tuple):
+        self.row += translation[0]
+        self.col += translation[1]
+        return self
 
     def __repr__(self):
         return self.to_notation()
@@ -90,14 +99,64 @@ class ChessPiece:
     def is_valid_move(self, new_position: SquarePosition) -> bool:
         return new_position in self.legal_moves
 
+    def is_captureable(self, target):
+        return target.color != self.color
+
     def __repr__(self):
         return f"{self.color.value} {self.type.name} @ {self.position}"
 
+#<editor-fold desc = "PIECES HELPER">
+
+def add_sliding_moves(piece: ChessPiece, board, directions):
+    """
+    directions: iterable of (dr, dc)
+    Adds squares until blocked. Can capture enemy on first occupied square, but cannot go beyond it.
+    """
+    if piece.position is None:
+        return
+
+    start_r = piece.position.row
+    start_c = piece.position.col
+
+    for dr, dc in directions:
+        r = start_r + dr
+        c = start_c + dc
+        while 0 <= r < 8 and 0 <= c < 8:
+            target = board.grid[r][c]
+            if target is None:
+                piece.legal_moves.add(SquarePosition(row=r, col=c))
+            else:
+                if target.color != piece.color:
+                    piece.legal_moves.add(SquarePosition(row=r, col=c))
+                break
+            r += dr
+            c += dc
+
+def add_single_move(piece: ChessPiece,board,directions):
+    if piece.position is None:
+        return
+
+    start_r = piece.position.row
+    start_c = piece.position.col
+
+    for dr,dc in directions:
+        r = start_r + dr
+        c = start_c + dc
+        if 0 <= r < 8 and 0 <= c < 8:
+            target = board.grid[r][c]
+            if target is None or target.color != piece.color:
+                piece.legal_moves.add(SquarePosition(row=r, col=c))
+
+
+
+#</editor-fold>
 
 class Pawn(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.PAWN)
 
+    def is_captureable(self, target):
+        return target is not None and super().is_captureable(target)
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
@@ -128,29 +187,120 @@ class Pawn(ChessPiece):
             cap_col = col + dc
             if 0 <= cap_row < 8 and 0 <= cap_col < 8:
                 target = board.grid[cap_row][cap_col]
-                if target is not None and target.color != self.color:
+                if self.is_captureable(target):
                     self.legal_moves.add(SquarePosition(row=cap_row, col=cap_col))
+
+class Knight(ChessPiece):
+    def __init__(self, color, position: SquarePosition):
+        super().__init__(color, position, ChessPieceType.KNIGHT)
+    def update_all_legal_moves(self, board):
+        self.legal_moves.clear()
+        if self.position is None or board is None:
+            return
+
+        directions = [
+           (2,1),(2,-1),
+            (1,2),(1,-2),
+            (-1,2),(-1,-2),
+            (-2,1),(-2,-1)
+        ]
+        add_single_move(self, board, directions)
+
 
 
 class Rook(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.ROOK)
 
-class Knight(ChessPiece):
-    def __init__(self, color, position: SquarePosition):
-        super().__init__(color, position, ChessPieceType.KNIGHT)
+    def update_all_legal_moves(self, board):
+        self.legal_moves.clear()
+        if self.position is None or board is None:
+            return
+
+        directions = [
+            (-1, 0),  # up
+            (1, 0),   # down
+            (0, -1),  # left
+            (0, 1),   # right
+        ]
+        add_sliding_moves(self, board, directions)
+
 
 class Bishop(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.BISHOP)
 
+    def update_all_legal_moves(self, board):
+        self.legal_moves.clear()
+        if self.position is None or board is None:
+            return
+
+        directions = [
+            (-1, -1),  # up-left
+            (-1, 1),   # up-right
+            (1, -1),   # down-left
+            (1, 1),    # down-right
+        ]
+        add_sliding_moves(self, board, directions)
+
+
 class Queen(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.QUEEN)
 
+    def update_all_legal_moves(self, board):
+        self.legal_moves.clear()
+        if self.position is None or board is None:
+            return
+
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),      # rook-like
+            (-1, -1), (-1, 1), (1, -1), (1, 1),    # bishop-like
+        ]
+        add_sliding_moves(self, board, directions)
+
 class King(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.KING)
+
+    def update_all_legal_moves(self, board):
+        self.legal_moves.clear()
+
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),  # rook-like
+            (-1, -1), (-1, 1), (1, -1), (1, 1),  # bishop-like
+        ]
+        curr_pos = self.position.to_translation()
+        for adder in directions:
+            r = curr_pos[0] + adder[0]
+            c = curr_pos[1] + adder[1]
+            if 0 <= r < 8 and 0 <= c < 8:
+                target = board.grid[r][c]
+                if target is None:
+                    self.legal_moves.add(SquarePosition(row=r, col=c))
+                else:
+                    if target.color != self.color:
+                        self.legal_moves.add(SquarePosition(row=r, col=c))
+
+
+
+class Player:
+    def __init__(self,board,color):
+        self.board = board
+        self.color = color
+        self.pieces = list(filter(lambda c: c == color,board.get_all_pieces()))
+        self.controlled_squares = set()
+        self.updated_all_controlled_squares()
+
+
+    def updated_all_controlled_squares(self):
+        self.controlled_squares.clear()
+        for piece in self.pieces:
+            for square in piece.legal_moves:
+                self.controlled_squares.add(square)
+
+
+
 # </editor-fold>
 
 
@@ -222,7 +372,8 @@ class Board:
     def get_all_pieces(self):
         return [p for row in self.grid for p in row if p is not None]
 
-
+    def update_all_pieces_legal_moves(self):
+         [p.update_all_legal_moves(self) for row in self.grid for p in row if p is not None]
 
     def move_piece(self, from_pos: SquarePosition, to_pos: SquarePosition):
         piece = self.grid[from_pos.row][from_pos.col]
@@ -243,6 +394,7 @@ class Board:
         piece.position = SquarePosition(row=to_pos.row, col=to_pos.col)
         piece.update_all_legal_moves(self)
 
+        self.update_all_pieces_legal_moves()
         self.switch_turn()
 
 
@@ -325,6 +477,8 @@ PYGAME = pygame
 SCREEN = None
 BOARD = None
 IMAGE_CACHE = {}
+
+WHITE_PLA
 # </editor-fold>
 
 
@@ -336,7 +490,6 @@ def main():
     SCREEN = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
     pygame.display.set_caption("Chess")
     clock = pygame.time.Clock()
-    print("got here")
     BOARD = Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
     IMAGE_CACHE = {}
 
