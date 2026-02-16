@@ -107,11 +107,46 @@ class ChessPiece:
     def is_valid_move(self, new_position: SquarePosition) -> bool:
         return new_position in self.legal_moves and not self.player.is_in_check
 
-    def is_captureable(self, target):
+    def is_captureable(self, target) -> bool:
         return target.color != self.color
+    def is_controlling_square(self,position : SquarePosition):
+        return position in self.controlled_squares
+
+    def can_defend_check(self):
+        enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
+        if not self.player.is_in_check:
+            return True
+        if len(enemy_player.checking_pieces) == 2:  # double check
+            return self.is_king()
+        checking_piece = enemy_player.checking_pieces[0]
+        if self.is_controlling_square(checking_piece.position):
+            return True
+        squares_controlled_by_both = (self.controlled_squares & checking_piece.controlled_squares)
+        squares_controlled_by_both.remove(self.player.king.position)
+        return squares_controlled_by_both
+
+
+    def update_legal_moves_in_check(self):
+        if self.player.is_in_check:
+            enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
+            checking_piece = enemy_player.checking_pieces[0]
+
+            self.legal_moves = (self.controlled_squares & checking_piece.controlled_squares)
+            self.legal_moves.remove(self.player.king.position)
+
+
+
+
+    def is_king(self):
+        return self.type == ChessPieceType.KING
+
+
 
     def __repr__(self):
         return f"{self.color.value} {self.type.name} @ {self.position}"
+    def __bool__(self):
+        return self.position is not None
+
 
 #<editor-fold desc = "PIECES HELPER">
 
@@ -120,7 +155,7 @@ def add_sliding_moves(piece: ChessPiece, board, directions):
     directions: iterable of (dr, dc)
     Adds squares until blocked. Can capture enemy on first occupied square, but cannot go beyond it.
     """
-    if piece.position is None:
+    if not piece:
         return
 
     start_r = piece.position.row
@@ -134,7 +169,7 @@ def add_sliding_moves(piece: ChessPiece, board, directions):
 
             piece.controlled_squares.add(SquarePosition(row=r, col=c))  # Mark this square as controlled regardless of occupancy
 
-            if target is None:
+            if not target or target.is_king():
                 piece.legal_moves.add(SquarePosition(row=r, col=c))
             else:
                 if target.color != piece.color:
@@ -145,24 +180,6 @@ def add_sliding_moves(piece: ChessPiece, board, directions):
 
 
 # Inside Pawn class
-
-def add_single_move(piece: ChessPiece,board,directions):
-    if piece.position is None:
-        return
-
-    start_r = piece.position.row
-    start_c = piece.position.col
-
-    for dr,dc in directions:
-        r = start_r + dr
-        c = start_c + dc
-
-        if 0 <= r < 8 and 0 <= c < 8:
-            pos = SquarePosition(row=r, col=c)
-            target = board.grid[r][c]
-            piece.controlled_squares.add(pos)
-            if target is None or target.color != piece.color:
-                piece.legal_moves.add(pos)
 
 
 
@@ -177,9 +194,14 @@ class Pawn(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
-        self.controlled_squares.clear()
-        if self.position is None or board is None:
+        if self.position is None or board is None or not self.can_defend_check():
             return
+        if self.player.is_in_check:
+            self.update_legal_moves_in_check()
+            return
+        self.controlled_squares.clear()
+
+
 
         row = self.position.row
         col = self.position.col
@@ -215,9 +237,13 @@ class Knight(ChessPiece):
         super().__init__(color, position, ChessPieceType.KNIGHT)
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
-        self.controlled_squares.clear()
         if self.position is None or board is None:
             return
+        if self.player.is_in_check:
+            self.update_legal_moves_in_check()
+            return
+        self.controlled_squares.clear()
+
 
         directions = [
            (2,1),(2,-1),
@@ -225,7 +251,21 @@ class Knight(ChessPiece):
             (-1,2),(-1,-2),
             (-2,1),(-2,-1)
         ]
-        add_single_move(self, board, directions)
+
+
+        start_r = self.position.row
+        start_c = self.position.col
+
+        for dr, dc in directions:
+            r = start_r + dr
+            c = start_c + dc
+
+            if 0 <= r < 8 and 0 <= c < 8:
+                pos = SquarePosition(row=r, col=c)
+                target = board.grid[r][c]
+                self.controlled_squares.add(pos)
+                if not target or target.color != self.color:
+                    self.legal_moves.add(pos)
 
 
 
@@ -235,7 +275,13 @@ class Rook(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
+
+        if self.player.is_in_check:
+            self.update_legal_moves_in_check()
+            return
         self.controlled_squares.clear()
+
+
         if self.position is None or board is None:
             return
 
@@ -258,6 +304,10 @@ class Bishop(ChessPiece):
 
         if self.position is None or board is None:
             return
+        if self.player.is_in_check:
+            self.update_legal_moves_in_check()
+            return
+        self.controlled_squares.clear()
 
         directions = [
             (-1, -1),  # up-left
@@ -278,6 +328,10 @@ class Queen(ChessPiece):
 
         if self.position is None or board is None:
             return
+        if self.player.is_in_check:
+            self.update_legal_moves_in_check()
+            return
+        self.controlled_squares.clear()
 
         directions = [
             (-1, 0), (1, 0), (0, -1), (0, 1),      # rook-like
@@ -295,6 +349,7 @@ class King(ChessPiece):
 
         if self.position is None:
             return
+        
 
         directions = [
             (-1, 0), (1, 0), (0, -1), (0, 1),
@@ -372,13 +427,21 @@ class Player:
         self.controlled_squares = set()
         self.is_in_check = False
         self.is_in_checkmate = False
+        self.checking_pieces = []
         self.king = None
         # Do not calculate here, wait for board to load
 
     def refresh_pieces(self):
         """Finds my pieces on the current board grid."""
         self.pieces = [p for p in self.board.get_all_pieces() if p.color == self.color]
-        self.king = tuple(filter(lambda p: p.type == ChessPieceType.KING, self.pieces))[0]
+        self.king = None
+        for p in self.pieces:
+            if p.is_king():
+                self.king = p
+        if self.king is None:
+            self.is_in_checkmate = True
+
+
 
 
     def update_controlled_squares(self):
@@ -459,8 +522,9 @@ class Board:
         # 2. Update moves for Non-Kings (Sliding, Knights, Pawns)
         all_pieces = self.get_all_pieces()
         for p in all_pieces:
-            if p.type != ChessPieceType.KING:
+            if not p.is_king():
                 p.update_all_legal_moves(self)
+                print(list(p.legal_moves))
 
         # 3. Update Controlled Squares
         if PLAYERS:
@@ -475,7 +539,12 @@ class Board:
 
             # 1. Is the king currently under attack?
             enemy_player = PLAYERS.get(OTHER_COLOR.get(player.color))
-            player.is_in_check = enemy_player.is_controlling_square(player.king.position)
+            player.is_in_check = False
+            player.checking_pieces.clear()
+            king_pos = player.king.position
+            for piece in enemy_player.pieces:
+                if piece.is_controlling_square(king_pos):
+                    player.checking_pieces.append(piece)
 
             # 2. Checkmate detection
             if player.is_in_check:
@@ -485,6 +554,8 @@ class Board:
                 for piece in player.pieces:
                     if piece.legal_moves:  # If at least one piece can move somewhere
                         has_any_escape = True
+                        print("escape = ",piece)
+                        print(list(piece.legal_moves))
                         break
 
                 player.is_in_checkmate = not has_any_escape
