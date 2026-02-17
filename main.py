@@ -1,5 +1,5 @@
 import chess
-
+import queue
 def main():
     chess.main()
 

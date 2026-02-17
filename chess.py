@@ -523,8 +523,8 @@ class Board:
         all_pieces = self.get_all_pieces()
         for p in all_pieces:
             if not p.is_king():
+                
                 p.update_all_legal_moves(self)
-                print(list(p.legal_moves))
 
         # 3. Update Controlled Squares
         if PLAYERS:
@@ -554,8 +554,6 @@ class Board:
                 for piece in player.pieces:
                     if piece.legal_moves:  # If at least one piece can move somewhere
                         has_any_escape = True
-                        print("escape = ",piece)
-                        print(list(piece.legal_moves))
                         break
 
                 player.is_in_checkmate = not has_any_escape
@@ -689,7 +687,7 @@ IMAGE_CACHE = {}
 
 # <editor-fold desc="MAIN">
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE,WHITE_PLAYER,BLACK_PLAYER,PLAYERS
+    global SCREEN, BOARD, IMAGE_CACHE,PLAYERS
 
     pygame.init()
     SCREEN = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
