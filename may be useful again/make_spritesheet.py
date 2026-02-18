@@ -1,6 +1,5 @@
 from PIL import Image
 import os
-from chess_pieces import chess_pieces
 
 def main():
 

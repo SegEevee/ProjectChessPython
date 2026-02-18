@@ -33,6 +33,8 @@ def pixel_to_squarepos(mouse_pos):
         return SquarePosition(row=row, col=col)
     return None
 
+def is_iterable_empty(iterable : iter):
+    return len(iterable) == 0
 
 
 # </editor-fold>
@@ -40,6 +42,8 @@ def pixel_to_squarepos(mouse_pos):
 
 # <editor-fold desc="POSITION CLASS">
 class SquarePosition:
+
+
     def __init__(self, notation: str = None, row: int = None, col: int = None):
         if notation is not None:
             r, c = notation_to_row_col(notation)
@@ -47,7 +51,8 @@ class SquarePosition:
         elif row is not None and col is not None:
             self.row, self.col = row, col
         else:
-            raise ValueError("SquarePosition requires notation or row+col")
+            self.row = None
+            self.col = None
 
     def to_notation(self) -> str:
         return row_col_to_notation(self.row, self.col)
@@ -101,7 +106,7 @@ def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]
 
     # Not aligned => nothing "between" in chess sense
     if not (dr == 0 or dc == 0 or abs(dr) == abs(dc)):
-        return []
+        return set()
 
     # Step direction: -1, 0, or +1
     step_r = 0 if dr == 0 else (1 if dr > 0 else -1)
@@ -141,14 +146,14 @@ class ChessPiece:
         self.legal_moves.clear()
 
     def is_valid_move(self, new_position: SquarePosition) -> bool:
-        return new_position in self.legal_moves and not self.player.is_in_check
+        return new_position in self.legal_moves
 
     def is_captureable(self, target) -> bool:
         return target.color != self.color
     def is_controlling_square(self,position : SquarePosition):
         return position in self.controlled_squares
 
-    def can_defend_check(self):
+    """def can_defend_check(self):
         enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
         if not self.player.is_in_check:
             return True
@@ -158,20 +163,19 @@ class ChessPiece:
         if self.is_controlling_square(checking_piece.position):
             return True
         squares_controlled_by_both = (self.controlled_squares & checking_piece.controlled_squares)
-        squares_controlled_by_both.remove(self.player.king.position)
-        return squares_controlled_by_both
+
+        return squares_controlled_by_both"""
 
 
     def update_legal_moves_in_check(self):
         if self.player.is_in_check:
             checking_piece = self.player.checking_pieces[0]
-
             squares_between_set = squares_between(checking_piece.position,self.player.king.position)
 
-            self.legal_moves = (self.controlled_squares & checking_piece.controlled_squares)
+            self.legal_moves = self.legal_moves.union(self.controlled_squares).intersection(squares_between_set.union({checking_piece.position}))
+
             if self.player.king.position in self.legal_moves:
                 self.legal_moves.remove(self.player.king.position)
-            print(self,self.legal_moves == True)
 
 
 
@@ -234,15 +238,13 @@ class Pawn(ChessPiece):
         return target is not None and super().is_captureable(target)
 
     def update_all_legal_moves(self, board):
-        self.legal_moves.clear()
-        if self.position is None or board is None or not self.can_defend_check():
+        self.controlled_squares.clear()
+        if self.position is None or board is None:
             return
         if self.player.is_in_check:
             self.update_legal_moves_in_check()
             return
-        self.controlled_squares.clear()
-
-
+        self.legal_moves.clear()
 
         row = self.position.row
         col = self.position.col
@@ -282,7 +284,6 @@ class Knight(ChessPiece):
             return
         if self.player.is_in_check:
             self.update_legal_moves_in_check()
-            print(self,self.legal_moves)
             return
         self.controlled_squares.clear()
 
@@ -435,8 +436,7 @@ class King(ChessPiece):
     def has_valid_moves(self):
         return self.legal_moves
 
-    def is_valid_move(self, new_position: SquarePosition) -> bool:
-        return new_position in self.legal_moves
+
 
 
 
@@ -482,6 +482,12 @@ class Player:
                 self.king = p
         if self.king is None:
             self.is_in_checkmate = True
+
+    def get_legal_moves(self) -> dict[ChessPiece: set[SquarePosition]]:
+        legal_moves = {}
+        for piece in self.pieces:
+            legal_moves[piece] = piece.legal_moves
+        return legal_moves
 
 
 
@@ -573,7 +579,6 @@ class Board:
         playing_player = PLAYERS.get(self.active_color)
         if playing_player.is_controlling_square(enemy_player.king.position):
             enemy_player.is_in_check = True
-            print("got here")
             enemy_player.king.update_all_legal_moves(self)
 
 
@@ -582,7 +587,6 @@ class Board:
             for piece in playing_player.pieces:
                 if piece.is_controlling_square(king_pos):
                     enemy_player.checking_pieces.append(piece)
-                    print(piece)
             playing_player.refresh_pieces()
 
             # 2. Checkmate detection
@@ -590,20 +594,25 @@ class Board:
                 # Check if ANY piece has ANY legal move.
                 # Note: True chess logic requires ensuring the move actually resolves the check.
                 has_any_escape = False
+                escape_pieces = []
                 for piece in enemy_player.pieces:
                     piece.update_all_legal_moves(self)
                     if piece.legal_moves:  # If at least one piece can move somewhere
                         has_any_escape = True
-                        print("escape = ", piece)
-                        print(list(piece.legal_moves))
+
+                        escape_pieces.append(piece)
                         break
 
                 enemy_player.is_in_checkmate = not has_any_escape
+                print("escaped = ", escape_pieces)
             else:
                 enemy_player.is_in_checkmate = False
 
             if enemy_player.is_in_checkmate:
                 print(f"CHECKMATE! {OTHER_COLOR.get(enemy_player.color).value} wins!")
+            else:
+                print(f"{enemy_player.color.value} is in check!")
+                print(enemy_player.get_legal_moves())
         elif enemy_player.is_controlling_square(playing_player.king):
             print("nah bro")
 
