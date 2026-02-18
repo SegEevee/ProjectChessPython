@@ -86,6 +86,42 @@ class ChessPieceType(Enum):
     KING   = "K"
 # </editor-fold>
 
+# <editor-fold desc="PIECE_HELPER">
+def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]:
+    """
+    Returns the squares strictly between a and b (excluding endpoints),
+    but ONLY if a and b are aligned:
+      - same row (rank)
+      - same col (file)
+      - same diagonal (|dr| == |dc|)
+    Otherwise returns [].
+    """
+    dr = b.row - a.row
+    dc = b.col - a.col
+
+    # Not aligned => nothing "between" in chess sense
+    if not (dr == 0 or dc == 0 or abs(dr) == abs(dc)):
+        return []
+
+    # Step direction: -1, 0, or +1
+    step_r = 0 if dr == 0 else (1 if dr > 0 else -1)
+    step_c = 0 if dc == 0 else (1 if dc > 0 else -1)
+
+    r = a.row + step_r
+    c = a.col + step_c
+
+    between = set()
+    while (r, c) != (b.row, b.col):
+        between.add(SquarePosition(row=r, col=c))
+        r += step_r
+        c += step_c
+
+    # This includes b if loop ended incorrectly, but our condition prevents that.
+    # Remove endpoints already excluded by starting at a+step and stopping at b.
+    return between
+
+#</editor-fold>
+
 
 # <editor-fold desc="PIECES">
 class ChessPiece:
@@ -128,11 +164,14 @@ class ChessPiece:
 
     def update_legal_moves_in_check(self):
         if self.player.is_in_check:
-            enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
-            checking_piece = enemy_player.checking_pieces[0]
+            checking_piece = self.player.checking_pieces[0]
+
+            squares_between_set = squares_between(checking_piece.position,self.player.king.position)
 
             self.legal_moves = (self.controlled_squares & checking_piece.controlled_squares)
-            self.legal_moves.remove(self.player.king.position)
+            if self.player.king.position in self.legal_moves:
+                self.legal_moves.remove(self.player.king.position)
+            print(self,self.legal_moves == True)
 
 
 
@@ -149,6 +188,8 @@ class ChessPiece:
 
 
 #<editor-fold desc = "PIECES HELPER">
+
+
 
 def add_sliding_moves(piece: ChessPiece, board, directions):
     """
@@ -241,6 +282,7 @@ class Knight(ChessPiece):
             return
         if self.player.is_in_check:
             self.update_legal_moves_in_check()
+            print(self,self.legal_moves)
             return
         self.controlled_squares.clear()
 
@@ -349,7 +391,7 @@ class King(ChessPiece):
 
         if self.position is None:
             return
-        
+
 
         directions = [
             (-1, 0), (1, 0), (0, -1), (0, 1),
@@ -507,63 +549,67 @@ class Board:
         return [p for row in self.grid for p in row if p is not None]
 
     def update_game_state(self):
-        """
-        Updates moves in a strict order to handle King safety:
-        1. Refresh Player piece lists.
-        2. Calculate moves for all NON-KING pieces.
-        3. Update Player 'controlled squares' based on those moves.
-        4. Calculate moves for KINGS (checking controlled squares).
-        """
+
         # 1. Refresh piece ownership
         if PLAYERS:
             for p in PLAYERS.values():
                 p.refresh_pieces()
+        else: return
 
         # 2. Update moves for Non-Kings (Sliding, Knights, Pawns)
         all_pieces = self.get_all_pieces()
         for p in all_pieces:
             if not p.is_king():
                 p.update_all_legal_moves(self)
-                print(list(p.legal_moves))
+
 
         # 3. Update Controlled Squares
         if PLAYERS:
             for p in PLAYERS.values():
                 p.update_controlled_squares()
 
-        # 4. Update moves for Kings (Now they can see attacked squares)
 
-        # Inside Board.update_game_state
-        for player in PLAYERS.values():
-            player.king.update_all_legal_moves(self)
+        enemy_player = PLAYERS.get(OTHER_COLOR.get(self.active_color))
+        playing_player = PLAYERS.get(self.active_color)
+        if playing_player.is_controlling_square(enemy_player.king.position):
+            enemy_player.is_in_check = True
+            print("got here")
+            enemy_player.king.update_all_legal_moves(self)
 
-            # 1. Is the king currently under attack?
-            enemy_player = PLAYERS.get(OTHER_COLOR.get(player.color))
-            player.is_in_check = False
-            player.checking_pieces.clear()
-            king_pos = player.king.position
-            for piece in enemy_player.pieces:
+
+            enemy_player.checking_pieces.clear()
+            king_pos = enemy_player.king.position
+            for piece in playing_player.pieces:
                 if piece.is_controlling_square(king_pos):
-                    player.checking_pieces.append(piece)
+                    enemy_player.checking_pieces.append(piece)
+                    print(piece)
+            playing_player.refresh_pieces()
 
             # 2. Checkmate detection
-            if player.is_in_check:
+            if enemy_player.is_in_check:
                 # Check if ANY piece has ANY legal move.
                 # Note: True chess logic requires ensuring the move actually resolves the check.
                 has_any_escape = False
-                for piece in player.pieces:
+                for piece in enemy_player.pieces:
+                    piece.update_all_legal_moves(self)
                     if piece.legal_moves:  # If at least one piece can move somewhere
                         has_any_escape = True
-                        print("escape = ",piece)
+                        print("escape = ", piece)
                         print(list(piece.legal_moves))
                         break
 
-                player.is_in_checkmate = not has_any_escape
+                enemy_player.is_in_checkmate = not has_any_escape
             else:
-                player.is_in_checkmate = False
+                enemy_player.is_in_checkmate = False
 
-            if player.is_in_checkmate:
-                print(f"CHECKMATE! {OTHER_COLOR.get(player.color).value} wins!")
+            if enemy_player.is_in_checkmate:
+                print(f"CHECKMATE! {OTHER_COLOR.get(enemy_player.color).value} wins!")
+        elif enemy_player.is_controlling_square(playing_player.king):
+            print("nah bro")
+
+        # 4. Update moves for Kings (Now they can see attacked squares)
+
+
 
 
 
