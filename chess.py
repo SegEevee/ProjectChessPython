@@ -125,6 +125,37 @@ def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]
     # Remove endpoints already excluded by starting at a+step and stopping at b.
     return between
 
+
+def can_castle(board, king, rook):
+    # 1. Basic Type and Movement Checks
+    if not (king.type == ChessPieceType.KING and rook.type == ChessPieceType.ROOK):
+        return False
+    if king.has_moved or rook.has_moved or king.color != rook.color:
+        return False
+
+    # 2. Path Clearance Check (Are the squares between empty?)
+    between_squares = squares_between(king.position, rook.position)
+    for pos in between_squares:
+        if board.grid[pos.row][pos.col] is not None:
+            return False
+
+    # 3. "The Gauntlet" (Safety Checks)
+    # Rules: King cannot be in check, pass through check, or land in check.
+    player = PLAYERS[king.color]
+    enemy_player = PLAYERS[OTHER_COLOR[king.color]]
+
+    if player.is_in_check:
+        return False
+
+    # Determine direction to check the two squares the king moves across
+    direction = 1 if rook.position.col > king.position.col else -1
+    for i in range(1, 3):
+        test_pos = SquarePosition(row=king.position.row, col=king.position.col + (i * direction))
+        if enemy_player.is_controlling_square(test_pos):
+            return False
+
+    return True
+
 #</editor-fold>
 
 
@@ -137,6 +168,7 @@ class ChessPiece:
         self.legal_moves: set[SquarePosition] = set()
         self.controlled_squares: set[SquarePosition] = set()
         self.player = PLAYERS[color] if PLAYERS else None
+        self.has_moved = False
 
 
     def die(self):
@@ -548,6 +580,34 @@ class Board:
 
         self.update_game_state()
 
+    def perform_castle(self, king, rook):
+        king_old_pos = king.position
+        rook_old_pos = rook.position
+
+        # Calculate the new columns
+        direction = 1 if rook_old_pos.col > king_old_pos.col else -1
+        king_new_col = king_old_pos.col + (2 * direction)
+        rook_new_col = king_new_col - direction
+
+        king_new_pos = SquarePosition(row=king_old_pos.row, col=king_new_col)
+        rook_new_pos = SquarePosition(row=king_old_pos.row, col=rook_new_col)
+
+        # 1. Update the grid (Clear old, set new)
+        self.grid[king_old_pos.row][king_old_pos.col] = None
+        self.grid[rook_old_pos.row][rook_old_pos.col] = None
+        self.grid[king_new_pos.row][king_new_pos.col] = king
+        self.grid[rook_new_pos.row][rook_new_pos.col] = rook
+
+        # 2. Update the piece objects
+        king.position = king_new_pos
+        rook.position = rook_new_pos
+        king.has_moved = True
+        rook.has_moved = True
+
+        # 3. Finalize the turn
+        self.update_game_state()
+        self.switch_turn()
+
     def get_piece_at(self, position: SquarePosition) -> ChessPiece | None:
         return self.grid[position.row][position.col]
 
@@ -641,6 +701,7 @@ class Board:
         self.grid[to_pos.row][to_pos.col] = piece
         self.grid[from_pos.row][from_pos.col] = None
         piece.position = SquarePosition(row=to_pos.row, col=to_pos.col)
+        piece.has_moved = True
 
         # Update everything
         self.update_game_state()
@@ -772,10 +833,18 @@ def main():
 
                 if clicked_piece is not None:
                     # selecting your own piece
-                    if clicked_piece.color == BOARD.active_color and (
-                        picking_piece is None or clicked_piece.color == picking_piece.color
-                    ):
+
+                    if clicked_piece.color == BOARD.active_color and picking_piece is None:
                         picking_piece = clicked_piece
+
+                    elif picking_piece is not None and clicked_piece.color == BOARD.active_color and (
+                         clicked_piece.color == picking_piece.color
+                    ):
+                        if can_castle(BOARD,picking_piece,clicked_piece):
+                            perform_castle()
+                            picking_piece = None
+
+                        else: picking_piece = clicked_piece
                     # capturing opponent
                     elif (picking_piece is not None and clicked_piece.color != picking_piece.color
                           and picking_piece.is_valid_move(clicked)):
