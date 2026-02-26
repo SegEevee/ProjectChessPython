@@ -22,6 +22,10 @@ NOTATION_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, UNDO_BTN_RECT.bottom + 20, 150
 
 FPS = 60
 
+#delta time - second divided by FPS
+DT = 1/FPS
+STARTING_TIME = 5 * 60 #5 mins
+
 #starting pos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" (I want to change it to test castling)
 STARTING_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -30,6 +34,8 @@ DARK = (181, 136, 99)
 
 PICKING_PIECE_HIGHLIGHT_COLOR = (0, 255, 255)
 LEGAL_MOVES_HIGHLIGHT_COLOR = (67, 67, 67)
+
+RIGHT_CLICK_HIGHLIGHT_SQUARE_COLOR = (210, 43, 43)
 
 
 
@@ -138,7 +144,43 @@ class Move:
         return f"{self.move_type.name} {self.from_pos}->{self.to_pos}"
 
 
+
 # </editor-fold>
+
+# <editor-fold desc="ChessClock">
+class ChessClock:
+    def __init__(self,color,starting_time):
+        self.color = color
+        self.starting_time = starting_time
+        self.remaining = starting_time
+        self.ms = 0 #will be from 0-1
+        self.is_running = False
+
+    def tick(self):
+        if not self.is_running: return
+        self.ms += DT
+        if self.ms >= 1:
+            self.remaining -= 1
+            self.ms = 0
+    def start(self):
+        self.is_running = True
+    def stop(self):
+        self.is_running = False
+    def switch(self):
+        self.is_running = not self.is_running
+    def change_starting_time(self,new_starting_time):
+        self.starting_time = new_starting_time
+        self.remaining = new_starting_time
+    def reset(self):
+        self.remaining = self.starting_time
+        self.is_running = False
+    def __bool__(self):
+        return self.remaining != 0
+
+    def __str__(self):
+        return f"{int(self.remaining/60):02d}:{self.remaining%60:02d}"
+
+#</>
 
 # <editor-fold desc="PIECE_HELPER">
 def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]:
@@ -482,7 +524,7 @@ class Player:
         self.pieces = []
         self.controlled_squares = set()
         self.is_in_check = False
-        self.is_in_checkmate = False
+        self.lost = False
         self.checking_pieces = []
         self.king = None
 
@@ -490,7 +532,7 @@ class Player:
         self.pieces = [p for p in self.board.get_all_pieces() if p.color == self.color]
         self.king = next((p for p in self.pieces if p.is_king()), None)
         if self.king is None:
-            self.is_in_checkmate = True
+            self.lost = True
 
     def get_legal_moves(self) -> dict:
         legal_moves = {}
@@ -682,14 +724,14 @@ class Board:
                 p.update_all_legal_moves(self)
 
             if not enemy_player.has_legal_moves():
-                enemy_player.is_in_checkmate = True
+                enemy_player.lost = True
             else:
                 print(f"legal moves = {enemy_player.get_legal_moves()}")
                 enemy_player.is_in_check = False
 
         else:
             enemy_player.is_in_check = False
-            enemy_player.is_in_checkmate = False
+            enemy_player.lost = False
             enemy_player.king.update_all_legal_moves(self)
 
     def execute_move(self, move: Move):
@@ -782,7 +824,9 @@ class Board:
 
 
     def switch_turn(self):
+        CLOCKS[self.active_color].switch()
         self.active_color = ChessColor.BLACK if self.active_color == ChessColor.WHITE else ChessColor.WHITE
+        CLOCKS[self.active_color].switch()
 
     # <editor-fold desc = "BOARD_HELPER">
     def is_square_attacked(self, square: SquarePosition, my_color: ChessColor) -> bool:
@@ -944,7 +988,7 @@ def draw_board(screen, show_notation: bool = False):
                 y_pos = (row + 1) * SQUARE_SIZE - 18
                 screen.blit(text_surface, (x_pos, y_pos))
 
-def draw_side_menu(screen,show_notation):
+def draw_side_menu(screen,show_notation,clocks):
     """Paints the side control panel, clocks, and buttons."""
     # 1. Menu Background
     pygame.draw.rect(screen, (30, 30, 30), (WINDOW_SIZE, 0, MENU_WIDTH, SCREEN_HEIGHT))
@@ -955,15 +999,17 @@ def draw_side_menu(screen,show_notation):
     font_small = pygame.font.SysFont("Arial", 20, bold=True)
 
     # 2. Black's Clock Placeholder (Top)
+    black_clock = clocks[ChessColor.BLACK]
     pygame.draw.rect(screen, (20, 20, 20), (WINDOW_SIZE + 25, 20, 150, 60))
     pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 25, 20, 150, 60), 2)
-    b_clock_txt = font_large.render("10:00", True, (255, 255, 255))
+    b_clock_txt = font_large.render(str(black_clock), True, (255, 255, 255))
     screen.blit(b_clock_txt, (WINDOW_SIZE + 60, 30))
 
     # 3. White's Clock Placeholder (Bottom)
+    white_clock = clocks[ChessColor.WHITE]
     pygame.draw.rect(screen, (220, 220, 220), (WINDOW_SIZE + 25, SCREEN_HEIGHT - 80, 150, 60))
     pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 25, SCREEN_HEIGHT - 80, 150, 60), 2)
-    w_clock_txt = font_large.render("10:00", True, (0, 0, 0))
+    w_clock_txt = font_large.render(str(white_clock), True, (0, 0, 0))
     screen.blit(w_clock_txt, (WINDOW_SIZE + 60, SCREEN_HEIGHT - 70))
 
     # 4. The Undo Button (Middle)
@@ -1061,46 +1107,96 @@ def get_square_center(pos: SquarePosition):
 
 def draw_arrow(screen, start_pos: SquarePosition, end_pos: SquarePosition, color: tuple, alpha: int = 150,
                thickness: int = 6):
-    """Draws a transparent arrow between two squares using some trigonometry."""
+    """Draws a perfect transparent arrow, with L-shapes for Knight moves that respect piece color."""
     if start_pos == end_pos or start_pos is None or end_pos is None:
         return
 
-    # 1. Get the pixel centers
-    start_x, start_y = get_square_center(start_pos)
-    end_x, end_y = get_square_center(end_pos)
+    # 1. Get the exact pixel centers
+    center_start_x, center_start_y = get_square_center(start_pos)
+    center_end_x, center_end_y = get_square_center(end_pos)
 
     # 2. Create the invisible glass pane
-    glass_pane = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE), pygame.SRCALPHA)
+    glass_pane = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
     rgba_color = (color[0], color[1], color[2], alpha)
 
-    # 3. Calculate the angle FIRST
-    angle = math.atan2(end_y - start_y, end_x - start_x)
-
-    # --- THE ONLY CHANGE: SNIP THE LINE ---
-    # We walk 18 pixels backward from the tip. Increase this number to make the line even shorter.
+    padding = 25
     snip_length = 18
-    line_end_x = end_x - snip_length * math.cos(angle)
-    line_end_y = end_y - snip_length * math.sin(angle)
-
-    # 4. Draw the main stick stopping at the snipped length
-    pygame.draw.line(glass_pane, rgba_color, (start_x, start_y), (line_end_x, line_end_y), thickness)
-
-    # 5. The Math: Calculate the Arrowhead using the ORIGINAL end_x and end_y
     arrow_length = 20
-    arrow_angle = math.pi / 6  # 30 degrees for the pointy bits
+    arrow_angle = math.pi / 6
 
-    # Find the two corners of the triangle
-    x1 = end_x - arrow_length * math.cos(angle - arrow_angle)
-    y1 = end_y - arrow_length * math.sin(angle - arrow_angle)
-    x2 = end_x - arrow_length * math.cos(angle + arrow_angle)
-    y2 = end_y - arrow_length * math.sin(angle + arrow_angle)
+    # 3. IS IT A KNIGHT MOVE?
+    dr = abs(end_pos.row - start_pos.row)
+    dc = abs(end_pos.col - start_pos.col)
+    is_knight_move = (dr == 2 and dc == 1) or (dr == 1 and dc == 2)
 
-    # Draw the solid triangle at the end
+    if is_knight_move:
+        # --- THE FIX: CHECK THE PIECE COLOR ---
+        # Look at the board to see who is standing on the start square
+        piece = BOARD.get_piece_at(start_pos)
+        is_black_piece = piece is not None and piece.color == ChessColor.BLACK
+
+        if is_black_piece:
+            # BLACK'S PATH: Pick the corner with the HIGHEST row number (move DOWN first)
+            if start_pos.row > end_pos.row:
+                corner_row, corner_col = start_pos.row, end_pos.col
+            else:
+                corner_row, corner_col = end_pos.row, start_pos.col
+        else:
+            # WHITE'S PATH (or empty square): Pick the corner with the LOWEST row number (move UP first)
+            if start_pos.row < end_pos.row:
+                corner_row, corner_col = start_pos.row, end_pos.col
+            else:
+                corner_row, corner_col = end_pos.row, start_pos.col
+
+        corner_x, corner_y = get_square_center(SquarePosition(row=corner_row, col=corner_col))
+
+        # Angles for the two segments
+        angle1 = math.atan2(corner_y - center_start_y, corner_x - center_start_x)
+        angle2 = math.atan2(center_end_y - corner_y, center_end_x - corner_x)
+
+        # Apply Padding to Start and End (The corner has no padding!)
+        start_x = center_start_x + padding * math.cos(angle1)
+        start_y = center_start_y + padding * math.sin(angle1)
+
+        end_x = center_end_x - padding * math.cos(angle2)
+        end_y = center_end_y - padding * math.sin(angle2)
+
+        # Snip the stick so it doesn't pierce the arrowhead
+        stick_end_x = end_x - snip_length * math.cos(angle2)
+        stick_end_y = end_y - snip_length * math.sin(angle2)
+
+        # Draw the L-Shape using Pygame's connected lines feature
+        pygame.draw.lines(glass_pane, rgba_color, False,
+                          [(start_x, start_y), (corner_x, corner_y), (stick_end_x, stick_end_y)], thickness)
+
+        # The arrowhead needs to point along the second angle
+        final_angle = angle2
+
+    else:
+        # 4. NORMAL STRAIGHT ARROW
+        final_angle = math.atan2(center_end_y - center_start_y, center_end_x - center_start_x)
+
+        start_x = center_start_x + padding * math.cos(final_angle)
+        start_y = center_start_y + padding * math.sin(final_angle)
+
+        end_x = center_end_x - padding * math.cos(final_angle)
+        end_y = center_end_y - padding * math.sin(final_angle)
+
+        stick_end_x = end_x - snip_length * math.cos(final_angle)
+        stick_end_y = end_y - snip_length * math.sin(final_angle)
+
+        pygame.draw.line(glass_pane, rgba_color, (start_x, start_y), (stick_end_x, stick_end_y), thickness)
+
+    # 5. Draw the Solid Arrowhead
+    x1 = end_x - arrow_length * math.cos(final_angle - arrow_angle)
+    y1 = end_y - arrow_length * math.sin(final_angle - arrow_angle)
+    x2 = end_x - arrow_length * math.cos(final_angle + arrow_angle)
+    y2 = end_y - arrow_length * math.sin(final_angle + arrow_angle)
+
     pygame.draw.polygon(glass_pane, rgba_color, [(end_x, end_y), (x1, y1), (x2, y2)])
 
     # 6. Lay the glass pane over the board
     screen.blit(glass_pane, (0, 0))
-
 
 def draw_game_over_screen(screen, winner_color: ChessColor):
     # 1. Dim the background so the board looks "finished"
@@ -1150,9 +1246,17 @@ def draw_game_over_screen(screen, winner_color: ChessColor):
 PYGAME = pygame
 SCREEN = None
 PLAYERS = {}
+CLOCKS = {}
+
+
 BOARD = Board()
+
 PLAYERS[ChessColor.WHITE] = Player(BOARD, ChessColor.WHITE)
 PLAYERS[ChessColor.BLACK] = Player(BOARD, ChessColor.BLACK)
+
+CLOCKS[ChessColor.WHITE] = ChessClock(ChessColor.WHITE, STARTING_TIME)
+CLOCKS[ChessColor.BLACK] = ChessClock(ChessColor.BLACK, STARTING_TIME)
+
 IMAGE_CACHE = {}
 
 NOTATION_FONT = None  # We will initialize this inside main()
@@ -1205,12 +1309,19 @@ def main():
     global SCREEN, BOARD, IMAGE_CACHE, PLAYERS,NOTATION_FONT
 
     pygame.init()
+
     NOTATION_FONT = pygame.font.SysFont("Arial", 14, bold=True)
+
     SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED|pygame.RESIZABLE)
     pygame.display.set_caption("Chess")
-    clock = pygame.time.Clock()
+
+    # clocks
+
+    pygame_clock = pygame.time.Clock()
     BOARD.load_fen(STARTING_POSITION)
     IMAGE_CACHE = {}
+
+
 
     picking_piece: ChessPiece | None = None
     is_dragging = False
@@ -1221,10 +1332,16 @@ def main():
 
     # ARROW MEMORY
     drawn_arrows = set()
+    highlighted_squares = set()
     right_click_start = None
+
     game_over_btn_rect = None
     show_notation = False
     is_fullscreen = False
+
+
+    CLOCKS[BOARD.active_color].start()
+
 
     running = True
     while running:
@@ -1240,6 +1357,7 @@ def main():
                     is_dragging = False
                     promotion_pending = None
                     drawn_arrows.clear()
+                    highlighted_squares.clear()
 
                 # --- FULLSCREEN TOGGLE ---
                 elif event.key == pygame.K_F11:
@@ -1262,9 +1380,9 @@ def main():
 
                     # 1. UI BUTTON INTERCEPT
                     if UNDO_BTN_RECT.collidepoint(event.pos):
-                        print("yes")
                         BOARD.undo_move()
                         drawn_arrows.clear()
+                        highlighted_squares.clear()
                         picking_piece = None
                         is_dragging = False
                         promotion_pending = None
@@ -1281,16 +1399,21 @@ def main():
                             for p in PLAYERS:
                                 if p is not None: p.is_in_checkmate = False
 
+                            #reset game
                             BOARD.load_fen(STARTING_POSITION)
                             drawn_arrows.clear()
+                            highlighted_squares.clear()
                             picking_piece = None
                             is_dragging = False
-
+                            for clock in CLOCKS.values():
+                                clock.reset()
+                            CLOCKS.get(BOARD.active_color).start()
 
                         # If the glass case is down, DO NOT let them click the board.
                         continue
 
-                    drawn_arrows.clear()  # Erase all arrows on left click!
+                    drawn_arrows.clear()
+                    highlighted_squares.clear() # Erase all arrows and highlighted squares on left click
                     right_click_start = None
 
                     if promotion_pending is not None:
@@ -1360,21 +1483,32 @@ def main():
                     if right_click_start is not None:
                         right_click_end = pixel_to_squarepos(event.pos)
 
-                        if right_click_start != right_click_end and right_click_end is not None:
-                            arrow_tuple = (right_click_start, right_click_end)
-
-                            # Toggle behavior
-                            if arrow_tuple in drawn_arrows:
-                                drawn_arrows.remove(arrow_tuple)
+                        if right_click_end is not None:
+                            # DID THEY DRAG?
+                            if right_click_start != right_click_end:
+                                arrow_tuple = (right_click_start, right_click_end)
+                                if arrow_tuple in drawn_arrows:
+                                    drawn_arrows.remove(arrow_tuple)
+                                else:
+                                    drawn_arrows.add(arrow_tuple)
+                            # NO DRAG, JUST A CLICK!
                             else:
-                                drawn_arrows.add(arrow_tuple)
+                                if right_click_start in highlighted_squares:
+                                    highlighted_squares.remove(right_click_start)  # Turn off
+                                else:
+                                    highlighted_squares.add(right_click_start)  # Turn on
+
                         right_click_start = None
+
+        CLOCKS[BOARD.active_color].tick()
+        if not CLOCKS[BOARD.active_color]:
+            PLAYERS[BOARD.active_color].lost = True
 
         # --- DRAWING PHASE ---
         SCREEN.fill((0, 0, 0))
         draw_board(SCREEN,show_notation)
 
-        draw_side_menu(SCREEN,show_notation)
+        draw_side_menu(SCREEN, show_notation, CLOCKS)
 
         # Draw all pieces EXCEPT the one being dragged
         dragged_piece = picking_piece if is_dragging else None
@@ -1393,6 +1527,10 @@ def main():
             for legal_pos in picking_piece.legal_moves.keys():
                 highlight_square(SCREEN, legal_pos, LEGAL_MOVES_HIGHLIGHT_COLOR, thickness=5)
 
+        for square in highlighted_squares:
+            # Color: Red, Alpha: 100 (transparent), Thickness: 0 (filled square)
+            highlight_square(SCREEN, square, (200, 50, 50), alpha=100, thickness=0)
+
         # Draw the Arrows
         for start_pos, end_pos in drawn_arrows:
             draw_arrow(SCREEN, start_pos, end_pos, (255, 170, 0))  # Orange arrows
@@ -1403,19 +1541,23 @@ def main():
             promotion_rects = draw_promotion_menu(SCREEN, color, IMAGE_CACHE)
 
         # --- THE CHECKMATE SCREEN ---
+
+
         winner = None
-        if PLAYERS[ChessColor.WHITE].is_in_checkmate:
+        if PLAYERS[ChessColor.WHITE].lost:
             winner = ChessColor.BLACK
-        elif PLAYERS[ChessColor.BLACK].is_in_checkmate:
+        elif PLAYERS[ChessColor.BLACK].lost:
             winner = ChessColor.WHITE
 
         if winner is not None:
             game_over_btn_rect = draw_game_over_screen(SCREEN, winner)
+            for clock in CLOCKS.values():
+                clock.stop()
         else:
             game_over_btn_rect = None
 
         pygame.display.flip()
-        clock.tick(FPS)
+        pygame_clock.tick(FPS)
 
     pygame.quit()
     sys.exit()
