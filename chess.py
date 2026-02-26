@@ -1,19 +1,39 @@
 import pygame
 import sys
+import math
 from enum import Enum
+
+from pygame.display import is_fullscreen
 
 # <editor-fold desc="CONFIG">
 BOARD_SIZE = 8
 SQUARE_SIZE = 80
 WINDOW_SIZE = BOARD_SIZE * SQUARE_SIZE
+
+# --- NEW UI CONFIG ---
+MENU_WIDTH = 200
+SCREEN_WIDTH = WINDOW_SIZE + MENU_WIDTH
+SCREEN_HEIGHT = WINDOW_SIZE
+
+# Pre-calculate the Undo Button's hitbox so the Event Loop knows where it is
+UNDO_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, SCREEN_HEIGHT // 2 - 25, 150, 50)
+# The new button sits right below the Undo button
+NOTATION_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, UNDO_BTN_RECT.bottom + 20, 150, 40)
+
 FPS = 60
 
+#starting pos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" (I want to change it to test castling)
 STARTING_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 LIGHT = (240, 217, 181)
-DARK  = (181, 136, 99)
-# </editor-fold>
+DARK = (181, 136, 99)
 
+PICKING_PIECE_HIGHLIGHT_COLOR = (0, 255, 255)
+LEGAL_MOVES_HIGHLIGHT_COLOR = (67, 67, 67)
+
+
+
+# </editor-fold>
 
 # <editor-fold desc="HELPERS (notation / coordinates)">
 def notation_to_row_col(pos: str):
@@ -22,8 +42,10 @@ def notation_to_row_col(pos: str):
     row = 8 - int(pos[1])
     return row, col
 
+
 def row_col_to_notation(row: int, col: int):
     return chr(ord('a') + col) + str(8 - row)
+
 
 def pixel_to_squarepos(mouse_pos):
     x, y = mouse_pos
@@ -33,17 +55,15 @@ def pixel_to_squarepos(mouse_pos):
         return SquarePosition(row=row, col=col)
     return None
 
-def is_iterable_empty(iterable : iter):
+
+def is_iterable_empty(iterable: iter):
     return len(iterable) == 0
 
 
 # </editor-fold>
 
-
 # <editor-fold desc="POSITION CLASS">
 class SquarePosition:
-
-
     def __init__(self, notation: str = None, row: int = None, col: int = None):
         if notation is not None:
             r, c = notation_to_row_col(notation)
@@ -58,9 +78,10 @@ class SquarePosition:
         return row_col_to_notation(self.row, self.col)
 
     def to_translation(self):
-        return self.row,self.col
-    def add_translation(self,translation : tuple):
-        return SquarePosition(row=self.row+translation[0],col=self.col+translation[1])
+        return self.row, self.col
+
+    def add_translation(self, translation: tuple):
+        return SquarePosition(row=self.row + translation[0], col=self.col + translation[1])
 
     def __repr__(self):
         return self.to_notation()
@@ -70,45 +91,63 @@ class SquarePosition:
 
     def __hash__(self):
         return hash((self.row, self.col))
+
+
 # </editor-fold>
 
-
-# <editor-fold desc="ENUMS">
+# <editor-fold desc="ENUMS & MOVE TYPES">
 class ChessColor(Enum):
     WHITE = "WHITE"
     BLACK = "BLACK"
 
-OTHER_COLOR = {ChessColor.WHITE:ChessColor.BLACK,ChessColor.BLACK:ChessColor.WHITE}
 
+OTHER_COLOR = {ChessColor.WHITE: ChessColor.BLACK, ChessColor.BLACK: ChessColor.WHITE}
 
 
 class ChessPieceType(Enum):
-    PAWN   = "P"
-    ROOK   = "R"
+    PAWN = "P"
+    ROOK = "R"
     KNIGHT = "N"
     BISHOP = "B"
-    QUEEN  = "Q"
-    KING   = "K"
+    QUEEN = "Q"
+    KING = "K"
+
+
+class MoveType(Enum):
+    NORMAL = 1
+    EN_PASSANT = 2
+    CASTLE = 3
+    PROMOTION = 4
+
+
+class Move:
+    """The Instruction Manual for the Board"""
+
+    def __init__(self, from_pos: SquarePosition, to_pos: SquarePosition, move_type=MoveType.NORMAL, victim_pos=None):
+        self.from_pos = from_pos
+        self.to_pos = to_pos
+        self.move_type = move_type
+        # If it's a normal capture, the victim is where we land. If En Passant, it's defined separately.
+        self.victim_pos = victim_pos if victim_pos else to_pos
+        self.promotion_choice = None
+
+    def get_as_tuple(self):
+        return self.move_type, self.from_pos, self.to_pos
+
+    def __repr__(self):
+        return f"{self.move_type.name} {self.from_pos}->{self.to_pos}"
+
+
 # </editor-fold>
 
 # <editor-fold desc="PIECE_HELPER">
 def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]:
-    """
-    Returns the squares strictly between a and b (excluding endpoints),
-    but ONLY if a and b are aligned:
-      - same row (rank)
-      - same col (file)
-      - same diagonal (|dr| == |dc|)
-    Otherwise returns [].
-    """
     dr = b.row - a.row
     dc = b.col - a.col
 
-    # Not aligned => nothing "between" in chess sense
     if not (dr == 0 or dc == 0 or abs(dr) == abs(dc)):
         return set()
 
-    # Step direction: -1, 0, or +1
     step_r = 0 if dr == 0 else (1 if dr > 0 else -1)
     step_c = 0 if dc == 0 else (1 if dc > 0 else -1)
 
@@ -120,34 +159,29 @@ def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]
         between.add(SquarePosition(row=r, col=c))
         r += step_r
         c += step_c
-
-    # This includes b if loop ended incorrectly, but our condition prevents that.
-    # Remove endpoints already excluded by starting at a+step and stopping at b.
     return between
 
 
 def can_castle(board, king, rook):
-    # 1. Basic Type and Movement Checks
+
+    if not king or not rook:
+        return False
     if not (king.type == ChessPieceType.KING and rook.type == ChessPieceType.ROOK):
         return False
     if king.has_moved or rook.has_moved or king.color != rook.color:
         return False
 
-    # 2. Path Clearance Check (Are the squares between empty?)
     between_squares = squares_between(king.position, rook.position)
     for pos in between_squares:
         if board.grid[pos.row][pos.col] is not None:
             return False
 
-    # 3. "The Gauntlet" (Safety Checks)
-    # Rules: King cannot be in check, pass through check, or land in check.
     player = PLAYERS[king.color]
     enemy_player = PLAYERS[OTHER_COLOR[king.color]]
 
     if player.is_in_check:
         return False
 
-    # Determine direction to check the two squares the king moves across
     direction = 1 if rook.position.col > king.position.col else -1
     for i in range(1, 3):
         test_pos = SquarePosition(row=king.position.row, col=king.position.col + (i * direction))
@@ -156,8 +190,33 @@ def can_castle(board, king, rook):
 
     return True
 
-#</editor-fold>
 
+def add_sliding_moves(piece, board, directions):
+    if not piece:
+        return
+
+    start_r = piece.position.row
+    start_c = piece.position.col
+
+    for dr, dc in directions:
+        r = start_r + dr
+        c = start_c + dc
+        while 0 <= r < 8 and 0 <= c < 8:
+            target = board.grid[r][c]
+            pos = SquarePosition(row=r, col=c)
+            piece.controlled_squares.add(pos)
+
+            if not target or target.is_king():
+                piece.legal_moves[pos] = Move(piece.position, pos)
+            else:
+                if target.color != piece.color:
+                    piece.legal_moves[pos] = Move(piece.position, pos)
+                break
+            r += dr
+            c += dc
+
+
+# </editor-fold>
 
 # <editor-fold desc="PIECES">
 class ChessPiece:
@@ -165,11 +224,11 @@ class ChessPiece:
         self.color = color
         self.position: SquarePosition | None = position
         self.type = piece_type
-        self.legal_moves: set[SquarePosition] = set()
+        # Changed to Dictionary for instant lookup of Move objects
+        self.legal_moves: dict[SquarePosition, Move] = {}
         self.controlled_squares: set[SquarePosition] = set()
         self.player = PLAYERS[color] if PLAYERS else None
         self.has_moved = False
-
 
     def die(self):
         self.position = None
@@ -182,85 +241,30 @@ class ChessPiece:
 
     def is_captureable(self, target) -> bool:
         return target.color != self.color
-    def is_controlling_square(self,position : SquarePosition):
+
+    def is_controlling_square(self, position: SquarePosition):
         return position in self.controlled_squares
 
-    """def can_defend_check(self):
-        enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
-        if not self.player.is_in_check:
-            return True
-        if len(enemy_player.checking_pieces) == 2:  # double check
-            return self.is_king()
-        checking_piece = enemy_player.checking_pieces[0]
-        if self.is_controlling_square(checking_piece.position):
-            return True
-        squares_controlled_by_both = (self.controlled_squares & checking_piece.controlled_squares)
+    def filter_safe_moves(self, board):
+        """The Bouncer. Throws out any move that gets the King killed."""
+        safe_moves = {}
+        for pos, move in self.legal_moves.items():
+            # We ask the Board (the table) to use its robotic arm on this specific move
+            if board.is_move_safe(self, move):
+                safe_moves[pos] = move
 
-        return squares_controlled_by_both"""
-
-
-    def update_legal_moves_in_check(self):
-        if self.player.is_in_check:
-            checking_piece = self.player.checking_pieces[0]
-            squares_between_set = squares_between(checking_piece.position,self.player.king.position)
-
-            self.legal_moves = self.legal_moves.union(self.controlled_squares).intersection(squares_between_set.union({checking_piece.position}))
-
-            if self.player.king.position in self.legal_moves:
-                self.legal_moves.remove(self.player.king.position)
-
-
-
+        # Replace the old list with the strictly safe list
+        self.legal_moves = safe_moves
 
     def is_king(self):
         return self.type == ChessPieceType.KING
 
-
-
     def __repr__(self):
         return f"{self.color.value} {self.type.name} @ {self.position}"
+
     def __bool__(self):
         return self.position is not None
 
-
-#<editor-fold desc = "PIECES HELPER">
-
-
-
-def add_sliding_moves(piece: ChessPiece, board, directions):
-    """
-    directions: iterable of (dr, dc)
-    Adds squares until blocked. Can capture enemy on first occupied square, but cannot go beyond it.
-    """
-    if not piece:
-        return
-
-    start_r = piece.position.row
-    start_c = piece.position.col
-
-    for dr, dc in directions:
-        r = start_r + dr
-        c = start_c + dc
-        while 0 <= r < 8 and 0 <= c < 8:
-            target = board.grid[r][c]
-
-            piece.controlled_squares.add(SquarePosition(row=r, col=c))  # Mark this square as controlled regardless of occupancy
-
-            if not target or target.is_king():
-                piece.legal_moves.add(SquarePosition(row=r, col=c))
-            else:
-                if target.color != piece.color:
-                    piece.legal_moves.add(SquarePosition(row=r, col=c))
-                break
-            r += dr
-            c += dc
-
-
-# Inside Pawn class
-
-
-
-#</editor-fold>
 
 class Pawn(ChessPiece):
     def __init__(self, color, position: SquarePosition):
@@ -270,78 +274,83 @@ class Pawn(ChessPiece):
         return target is not None and super().is_captureable(target)
 
     def update_all_legal_moves(self, board):
+        self.legal_moves.clear()
         self.controlled_squares.clear()
+
         if self.position is None or board is None:
             return
-        if self.player.is_in_check:
-            self.update_legal_moves_in_check()
-            return
-        self.legal_moves.clear()
 
         row = self.position.row
         col = self.position.col
-
         direction = -1 if self.color == ChessColor.WHITE else 1
         start_row = 6 if self.color == ChessColor.WHITE else 1
+
+        move_type = MoveType.NORMAL
+        # PROMOTION CHECK
+        if (row + direction) % 7 == 0:  # if its 0 or 7 (first or last row)
+            move_type = MoveType.PROMOTION
 
         # 1 step forward
         one_row = row + direction
         if 0 <= one_row < 8:
             if board.grid[one_row][col] is None:
-                self.legal_moves.add(SquarePosition(row=one_row, col=col))
+                pos = SquarePosition(row=one_row, col=col)
+                self.legal_moves[pos] = Move(self.position, pos, move_type=move_type)
 
                 # 2 steps forward from start
                 if row == start_row:
                     two_row = row + 2 * direction
                     if 0 <= two_row < 8 and board.grid[two_row][col] is None:
-                        self.legal_moves.add(SquarePosition(row=two_row, col=col))
+                        pos2 = SquarePosition(row=two_row, col=col)
+                        self.legal_moves[pos2] = Move(self.position, pos2)
 
-        # diagonal captures
+        # diagonal captures & En Passant
         for dc in (-1, 1):
             cap_row = row + direction
             cap_col = col + dc
             if 0 <= cap_row < 8 and 0 <= cap_col < 8:
                 pos = SquarePosition(row=cap_row, col=cap_col)
                 self.controlled_squares.add(pos)
+
                 target = board.grid[cap_row][cap_col]
                 if self.is_captureable(target):
-                    self.legal_moves.add(pos)
+                    self.legal_moves[pos] = Move(self.position, pos, move_type=move_type)
+
+                # EN PASSANT CHECK
+                if board.en_passant is not None and board.en_passant == pos:
+                    victim_pos = SquarePosition(row=row, col=cap_col)  # The victim is next to us!
+                    self.legal_moves[pos] = Move(
+                        self.position,
+                        pos,
+                        MoveType.EN_PASSANT,
+                        victim_pos=victim_pos
+                    )
+
+        self.filter_safe_moves(board)
+
 
 class Knight(ChessPiece):
     def __init__(self, color, position: SquarePosition):
         super().__init__(color, position, ChessPieceType.KNIGHT)
+
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
-        if self.position is None or board is None:
-            return
-        if self.player.is_in_check:
-            self.update_legal_moves_in_check()
-            return
         self.controlled_squares.clear()
+        if self.position is None or board is None: return
 
-
-        directions = [
-           (2,1),(2,-1),
-            (1,2),(1,-2),
-            (-1,2),(-1,-2),
-            (-2,1),(-2,-1)
-        ]
-
-
-        start_r = self.position.row
-        start_c = self.position.col
+        directions = [(2, 1), (2, -1), (1, 2), (1, -2), (-1, 2), (-1, -2), (-2, 1), (-2, -1)]
+        start_r, start_c = self.position.row, self.position.col
 
         for dr, dc in directions:
-            r = start_r + dr
-            c = start_c + dc
-
+            r, c = start_r + dr, start_c + dc
             if 0 <= r < 8 and 0 <= c < 8:
                 pos = SquarePosition(row=r, col=c)
                 target = board.grid[r][c]
                 self.controlled_squares.add(pos)
                 if not target or target.color != self.color:
-                    self.legal_moves.add(pos)
+                    self.legal_moves[pos] = Move(self.position, pos)
 
+        self.filter_safe_moves(board)
 
 
 class Rook(ChessPiece):
@@ -350,23 +359,11 @@ class Rook(ChessPiece):
 
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
-
-        if self.player.is_in_check:
-            self.update_legal_moves_in_check()
-            return
         self.controlled_squares.clear()
-
-
-        if self.position is None or board is None:
-            return
-
-        directions = [
-            (-1, 0),  # up
-            (1, 0),   # down
-            (0, -1),  # left
-            (0, 1),   # right
-        ]
+        if self.position is None or board is None: return
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         add_sliding_moves(self, board, directions)
+        self.filter_safe_moves(board)
 
 
 class Bishop(ChessPiece):
@@ -376,21 +373,10 @@ class Bishop(ChessPiece):
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
         self.controlled_squares.clear()
-
-        if self.position is None or board is None:
-            return
-        if self.player.is_in_check:
-            self.update_legal_moves_in_check()
-            return
-        self.controlled_squares.clear()
-
-        directions = [
-            (-1, -1),  # up-left
-            (-1, 1),   # up-right
-            (1, -1),   # down-left
-            (1, 1),    # down-right
-        ]
+        if self.position is None or board is None: return
+        directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
         add_sliding_moves(self, board, directions)
+        self.filter_safe_moves(board)
 
 
 class Queen(ChessPiece):
@@ -400,19 +386,11 @@ class Queen(ChessPiece):
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
         self.controlled_squares.clear()
-
-        if self.position is None or board is None:
-            return
-        if self.player.is_in_check:
-            self.update_legal_moves_in_check()
-            return
-        self.controlled_squares.clear()
-
-        directions = [
-            (-1, 0), (1, 0), (0, -1), (0, 1),      # rook-like
-            (-1, -1), (-1, 1), (1, -1), (1, 1),    # bishop-like
-        ]
+        if self.position is None or board is None: return
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
         add_sliding_moves(self, board, directions)
+        self.filter_safe_moves(board)
+
 
 class King(ChessPiece):
     def __init__(self, color, position: SquarePosition):
@@ -421,78 +399,82 @@ class King(ChessPiece):
     def update_all_legal_moves(self, board):
         self.legal_moves.clear()
         self.controlled_squares.clear()
+        if self.position is None: return
 
-        if self.position is None:
-            return
-
-
-        directions = [
-            (-1, 0), (1, 0), (0, -1), (0, 1),
-            (-1, -1), (-1, 1), (1, -1), (1, 1),
-        ]
-
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
         enemy_player = PLAYERS.get(OTHER_COLOR.get(self.color))
 
         for dr, dc in directions:
             r = self.position.row + dr
             c = self.position.col + dc
-
             if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
                 pos = SquarePosition(row=r, col=c)
                 self.controlled_squares.add(pos)
 
-                # 1. Check if the square is attacked by ANY enemy piece
                 if enemy_player.is_controlling_square(pos):
                     continue
 
                 target = board.grid[r][c]
-
-                # 2. Basic movement / capture logic
                 if target is None:
-                    self.legal_moves.add(pos)
-                else:
-                    # Capture only if it's an enemy AND not protected
-                    if target.color != self.color:
-                        # Crucial: Check if the enemy piece is protected
-                        if not self.is_piece_protected(board, pos, enemy_player):
-                            self.legal_moves.add(pos)
+                    self.legal_moves[pos] = Move(self.position, pos)
+                elif target.color != self.color:
+                    if not self.is_piece_protected(board, pos, enemy_player):
+                        self.legal_moves[pos] = Move(self.position, pos)
+
+        # --- CASTLING MOVES ---
+        # Look at all our own pieces. If it's a Rook, see if we can castle with it.
+        for friend in self.player.pieces:
+            if friend.type == ChessPieceType.ROOK:
+                if can_castle(board, self, friend):
+                    # The target square is the Rook's square, so the UI knows we clicked it!
+                    self.legal_moves[friend.position] = Move(
+                        from_pos=self.position,
+                        to_pos=friend.position,
+                        move_type=MoveType.CASTLE
+                    )
 
     def is_piece_protected(self, board, pos, enemy_player):
-        """
-        Determines if an enemy piece at 'pos' is defended by another enemy piece.
-        """
-        # In a simple engine, we can check if the enemy player
-        # 'controls' the square their own piece is standing on.
         return enemy_player.is_controlling_square(pos)
 
-    def has_valid_moves(self):
-        return self.legal_moves
-
-
-
-
-
+class MoveRecord:
+    """A single page in the Diary, holding a photograph of the past."""
+    def __init__(self, move: Move, moved_piece, piece_had_moved: bool, victim_piece, old_en_passant, old_castling_rights):
+        self.move = move
+        self.moved_piece = moved_piece
+        self.piece_had_moved = piece_had_moved
+        self.victim_piece = victim_piece
+        self.old_en_passant = old_en_passant
+        self.old_castling_rights = old_castling_rights
 
 # </editor-fold>
-
 
 # <editor-fold desc="FEN helpers">
+def create_piece_with_specified_color(color: ChessColor, char: str, position: SquarePosition):
+    c = char.upper()  # to match the enums
+    if c == 'P': return Pawn(color, position)
+    if c == 'R': return Rook(color, position)
+    if c == 'N': return Knight(color, position)
+    if c == 'B': return Bishop(color, position)
+    if c == 'Q': return Queen(color, position)
+    if c == 'K': return King(color, position)
+    return None
+
+
 def create_piece_from_fen(char: str, position: SquarePosition):
     color = ChessColor.WHITE if char.isupper() else ChessColor.BLACK
-    c = char.lower()
-
-    if c == 'p': return Pawn(color, position)
-    if c == 'r': return Rook(color, position)
-    if c == 'n': return Knight(color, position)
-    if c == 'b': return Bishop(color, position)
-    if c == 'q': return Queen(color, position)
-    if c == 'k': return King(color, position)
+    c = char.upper()  # to match the enums
+    if c == 'P': return Pawn(color, position)
+    if c == 'R': return Rook(color, position)
+    if c == 'N': return Knight(color, position)
+    if c == 'B': return Bishop(color, position)
+    if c == 'Q': return Queen(color, position)
+    if c == 'K': return King(color, position)
     return None
+
+
 # </editor-fold>
 
-
 # <editor-fold desc="BOARD AND PLAYER">
-
 class Player:
     def __init__(self, board, color):
         self.board = board
@@ -503,34 +485,28 @@ class Player:
         self.is_in_checkmate = False
         self.checking_pieces = []
         self.king = None
-        # Do not calculate here, wait for board to load
 
     def refresh_pieces(self):
-        """Finds my pieces on the current board grid."""
         self.pieces = [p for p in self.board.get_all_pieces() if p.color == self.color]
-        self.king = None
-        for p in self.pieces:
-            if p.is_king():
-                self.king = p
+        self.king = next((p for p in self.pieces if p.is_king()), None)
         if self.king is None:
             self.is_in_checkmate = True
 
-    def get_legal_moves(self) -> dict[ChessPiece: set[SquarePosition]]:
+    def get_legal_moves(self) -> dict:
         legal_moves = {}
         for piece in self.pieces:
             legal_moves[piece] = piece.legal_moves
         return legal_moves
 
-
-
+    def has_legal_moves(self):
+        has_moves = False
+        for piece in self.pieces:
+            has_moves = has_moves or piece.legal_moves
+        return has_moves
 
     def update_controlled_squares(self):
-        """Calculates all squares my pieces are attacking."""
         self.controlled_squares.clear()
         for piece in self.pieces:
-            # Kings need legal moves to move, but their "control" is just their basic move set.
-            # To avoid recursion, we can just use the piece's current legal moves
-            # (assuming they were updated before calling this).
             for square in piece.controlled_squares:
                 self.controlled_squares.add(square)
 
@@ -547,19 +523,22 @@ class Board:
         self.halfmove_clock = 0
         self.fullmove_number = 1
 
-        if fen:
-            self.load_fen(fen)
+        # --- THE DIARY ---
+        self.move_log: list[MoveRecord] = []
+
+        if fen: self.load_fen(fen)
 
     def clear(self):
         self.grid = [[None for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
+        self.move_log.clear()
 
     def load_fen(self, fen: str):
         self.clear()
-        parts = fen.strip().split()
-        if len(parts) != 6:
-            raise ValueError("Invalid FEN")
 
-        piece_data, active, castling, en_passant, halfmove, fullmove = parts
+        parts = fen.strip().split()
+        if len(parts) != 6: raise ValueError("Invalid FEN")
+
+        piece_data, active, castling, en_passant_str, halfmove, fullmove = parts
         rows = piece_data.split('/')
         for row_index, row in enumerate(rows):
             col = 0
@@ -568,45 +547,68 @@ class Board:
                     col += int(ch)
                 else:
                     pos = SquarePosition(row=row_index, col=col)
-                    piece = create_piece_from_fen(ch, pos)
-                    self.grid[row_index][col] = piece
+                    self.grid[row_index][col] = create_piece_from_fen(ch, pos)
                     col += 1
 
         self.active_color = ChessColor.WHITE if active == 'w' else ChessColor.BLACK
         self.castling_rights = castling
-        self.en_passant = None if en_passant == '-' else en_passant
+        self.en_passant = None if en_passant_str == '-' else SquarePosition(notation=en_passant_str)
         self.halfmove_clock = int(halfmove)
         self.fullmove_number = int(fullmove)
 
         self.update_game_state()
 
-    def perform_castle(self, king, rook):
-        king_old_pos = king.position
-        rook_old_pos = rook.position
+    def generate_fen(self) -> str:
+        """Scans the board and generates a perfect FEN string on demand."""
+        fen_rows = []
 
-        # Calculate the new columns
-        direction = 1 if rook_old_pos.col > king_old_pos.col else -1
-        king_new_col = king_old_pos.col + (2 * direction)
-        rook_new_col = king_new_col - direction
+        # 1. Scan the grid row by row
+        for row in range(8):
+            empty_count = 0
+            row_str = ""
+            for col in range(8):
+                piece = self.grid[row][col]
+                if piece is None:
+                    empty_count += 1
+                else:
+                    # If we have empty spaces saved up, write the number first
+                    if empty_count > 0:
+                        row_str += str(empty_count)
+                        empty_count = 0
 
-        king_new_pos = SquarePosition(row=king_old_pos.row, col=king_new_col)
-        rook_new_pos = SquarePosition(row=king_old_pos.row, col=rook_new_col)
+                    # Get the piece letter
+                    char = piece.type.value
+                    if piece.color == ChessColor.WHITE:
+                        char = char.upper()
+                    else:
+                        char = char.lower()
 
-        # 1. Update the grid (Clear old, set new)
-        self.grid[king_old_pos.row][king_old_pos.col] = None
-        self.grid[rook_old_pos.row][rook_old_pos.col] = None
-        self.grid[king_new_pos.row][king_new_pos.col] = king
-        self.grid[rook_new_pos.row][rook_new_pos.col] = rook
+                    row_str += char
 
-        # 2. Update the piece objects
-        king.position = king_new_pos
-        rook.position = rook_new_pos
-        king.has_moved = True
-        rook.has_moved = True
+            # If the row ends with empty spaces, write the final number
+            if empty_count > 0:
+                row_str += str(empty_count)
 
-        # 3. Finalize the turn
-        self.update_game_state()
-        self.switch_turn()
+            fen_rows.append(row_str)
+
+        # Join the rows with slashes
+        board_part = "/".join(fen_rows)
+
+        # 2. Who's turn is it?
+        active_part = 'w' if self.active_color == ChessColor.WHITE else 'b'
+
+        # 3. Castling Rights (If empty, it must be "-")
+        castling_part = self.castling_rights if self.castling_rights else "-"
+
+        # 4. En Passant Target
+        ep_part = self.en_passant.to_notation() if self.en_passant else "-"
+
+        # 5. Clocks
+        halfmove = str(self.halfmove_clock)
+        fullmove = str(self.fullmove_number)
+
+        # Smash it all together
+        return f"{board_part} {active_part} {castling_part} {ep_part} {halfmove} {fullmove}"
 
     def get_piece_at(self, position: SquarePosition) -> ChessPiece | None:
         return self.grid[position.row][position.col]
@@ -614,190 +616,585 @@ class Board:
     def get_all_pieces(self):
         return [p for row in self.grid for p in row if p is not None]
 
+    def is_move_safe(self, piece, move: Move) -> bool:
+        """The Time Machine. Makes a fake move, checks the King, and hits Undo."""
+        original_pos = piece.position
+        target_pos = move.to_pos
+        victim_pos = move.victim_pos
+
+        # 1. TAKE THE POLAROID
+        target_piece_backup = self.grid[target_pos.row][target_pos.col]
+        victim_piece_backup = self.grid[victim_pos.row][victim_pos.col] if victim_pos else None
+
+        # 2. FAST FORWARD (Simulate)
+        self.grid[original_pos.row][original_pos.col] = None
+        if victim_pos:
+            self.grid[victim_pos.row][victim_pos.col] = None
+
+        self.grid[target_pos.row][target_pos.col] = piece
+        piece.position = target_pos
+
+        # 3. LOOK AT THE KING
+        king = piece.player.king
+        # Use the King's current position (if the King is the one moving, this reflects the new square)
+        king_current_square = king.position
+
+        is_safe = not self.is_square_attacked(king_current_square, piece.color)
+
+        # 4. REWIND TIME (Undo)
+        piece.position = original_pos
+        self.grid[original_pos.row][original_pos.col] = piece
+
+        # Crucial: Restore victims and targets correctly without overwriting
+        if victim_pos:
+            self.grid[victim_pos.row][victim_pos.col] = victim_piece_backup
+        if target_pos != victim_pos:
+            self.grid[target_pos.row][target_pos.col] = target_piece_backup
+
+        return is_safe
+
     def update_game_state(self):
+        if not PLAYERS: return
 
-        # 1. Refresh piece ownership
-        if PLAYERS:
-            for p in PLAYERS.values():
-                p.refresh_pieces()
-        else: return
+        for p in PLAYERS.values(): p.refresh_pieces()
 
-        # 2. Update moves for Non-Kings (Sliding, Knights, Pawns)
         all_pieces = self.get_all_pieces()
         for p in all_pieces:
-            if not p.is_king():
-                p.update_all_legal_moves(self)
+            if not p.is_king(): p.update_all_legal_moves(self)
 
-
-        # 3. Update Controlled Squares
-        if PLAYERS:
-            for p in PLAYERS.values():
-                p.update_controlled_squares()
-
+        for p in PLAYERS.values(): p.update_controlled_squares()
 
         enemy_player = PLAYERS.get(OTHER_COLOR.get(self.active_color))
         playing_player = PLAYERS.get(self.active_color)
+
         if playing_player.is_controlling_square(enemy_player.king.position):
             enemy_player.is_in_check = True
             enemy_player.king.update_all_legal_moves(self)
-
 
             enemy_player.checking_pieces.clear()
             king_pos = enemy_player.king.position
             for piece in playing_player.pieces:
                 if piece.is_controlling_square(king_pos):
                     enemy_player.checking_pieces.append(piece)
-            playing_player.refresh_pieces()
 
-            # 2. Checkmate detection
-            if enemy_player.is_in_check:
-                # Check if ANY piece has ANY legal move.
-                # Note: True chess logic requires ensuring the move actually resolves the check.
-                has_any_escape = False
-                escape_pieces = []
-                for piece in enemy_player.pieces:
-                    piece.update_all_legal_moves(self)
-                    if piece.legal_moves:  # If at least one piece can move somewhere
-                        has_any_escape = True
+            # Reprocess enemy moves to filter them against the check
+            for p in enemy_player.pieces:
+                p.update_all_legal_moves(self)
 
-                        escape_pieces.append(piece)
-                        break
-
-                enemy_player.is_in_checkmate = not has_any_escape
-                print("escaped = ", escape_pieces)
+            if not enemy_player.has_legal_moves():
+                enemy_player.is_in_checkmate = True
             else:
-                enemy_player.is_in_checkmate = False
+                print(f"legal moves = {enemy_player.get_legal_moves()}")
+                enemy_player.is_in_check = False
 
-            if enemy_player.is_in_checkmate:
-                print(f"CHECKMATE! {OTHER_COLOR.get(enemy_player.color).value} wins!")
-            else:
-                print(f"{enemy_player.color.value} is in check!")
-                print(enemy_player.get_legal_moves())
-        elif enemy_player.is_controlling_square(playing_player.king):
-            print("nah bro")
+        else:
+            enemy_player.is_in_check = False
+            enemy_player.is_in_checkmate = False
+            enemy_player.king.update_all_legal_moves(self)
 
-        # 4. Update moves for Kings (Now they can see attacked squares)
+    def execute_move(self, move: Move):
+        """Replaces the old 'move_piece' and natively handles En Passant using the Move manual."""
+        piece = self.get_piece_at(move.from_pos)
+        if not piece: return
+
+        # ==========================================
+        # THE DIARY: TAKE THE SNAPSHOT BEFORE MOVING
+        # ==========================================
+        # Find out if anyone is about to die
+        victim = self.get_piece_at(move.victim_pos) if move.victim_pos else None
+
+        # Take the photograph
+        record = MoveRecord(
+            move=move,
+            moved_piece=piece,
+            piece_had_moved=piece.has_moved,
+            victim_piece=victim,
+            old_en_passant=self.en_passant,
+            old_castling_rights=self.castling_rights
+        )
+
+        # Save it in the book
+        self.move_log.append(record)
+
+        # 1. Capture Logic (Handles normal captures AND En Passant inherently)
+        if move.victim_pos:
+            victim = self.get_piece_at(move.victim_pos)
+            if victim and victim.color != piece.color:
+                victim.die()
+                self.grid[move.victim_pos.row][move.victim_pos.col] = None
+
+        # check castle
+        if move.move_type == MoveType.CASTLE:
+            rook = self.get_piece_at(move.to_pos)
+            if not rook: return
+            if can_castle(self,piece,rook):
+                self.perform_castle(piece, rook)
+                piece.has_moved = True
+
+
+        else:
+            # 2. Move Logic
+            self.grid[move.to_pos.row][move.to_pos.col] = piece
+            self.grid[move.from_pos.row][move.from_pos.col] = None
+            piece.position = move.to_pos
+            piece.has_moved = True
 
 
 
+        #check promotion
+        if move.move_type == MoveType.PROMOTION:
+            piece.die()
+            self.grid[move.to_pos.row][move.to_pos.col] = create_piece_with_specified_color(piece.color,
+                                                                                            str(move.promotion_choice.value),
+                                                                                            move.to_pos)
 
+        # 3. En Passant Memory Update
+        self.en_passant = None  # Always clear old memory
+        if piece.type == ChessPieceType.PAWN and abs(move.to_pos.row - move.from_pos.row) == 2:
+            mid_row = (move.to_pos.row + move.from_pos.row) // 2
+            self.en_passant = SquarePosition(row=mid_row, col=move.to_pos.col)
 
-    def update_all_pieces_legal_moves(self):
-        # Redirect to the safe update method
-        self.update_game_state()
-
-    def move_piece(self, from_pos: SquarePosition, to_pos: SquarePosition):
-        piece = self.grid[from_pos.row][from_pos.col]
-        if piece is None:
-            raise ValueError("No piece at source position")
-
-        target = self.grid[to_pos.row][to_pos.col]
-
-        # capture
-        if target is not None:
-            target.die()
-
-        # move
-        self.grid[to_pos.row][to_pos.col] = piece
-        self.grid[from_pos.row][from_pos.col] = None
-        piece.position = SquarePosition(row=to_pos.row, col=to_pos.col)
-        piece.has_moved = True
-
-        # Update everything
         self.update_game_state()
         self.switch_turn()
+
+    def perform_castle(self, king, rook):
+
+        if not king or not rook: return
+        king_old_pos = king.position
+        rook_old_pos = rook.position
+
+        direction = 1 if rook_old_pos.col > king_old_pos.col else -1
+        king_new_col = king_old_pos.col + (2 * direction)
+        rook_new_col = king_new_col - direction
+
+        king_new_pos = SquarePosition(row=king_old_pos.row, col=king_new_col)
+        rook_new_pos = SquarePosition(row=king_old_pos.row, col=rook_new_col)
+
+        self.grid[king_old_pos.row][king_old_pos.col] = None
+        self.grid[rook_old_pos.row][rook_old_pos.col] = None
+        self.grid[king_new_pos.row][king_new_pos.col] = king
+        self.grid[rook_new_pos.row][rook_new_pos.col] = rook
+
+        king.position = king_new_pos
+        rook.position = rook_new_pos
+        king.has_moved = True
+        rook.has_moved = True
+
 
     def switch_turn(self):
         self.active_color = ChessColor.BLACK if self.active_color == ChessColor.WHITE else ChessColor.WHITE
 
-    # ... (Keep create_fen as it was)
-    def create_fen(self) -> str:
-        # ... [Your existing create_fen code] ...
-        fen_rows = []
-        for row in range(8):
-            empty = 0
-            fen_row = ""
-            for col in range(8):
-                piece = self.grid[row][col]
-                if piece is None:
-                    empty += 1
-                else:
-                    if empty:
-                        fen_row += str(empty)
-                        empty = 0
-                    char = piece.type.value
-                    if piece.color == ChessColor.BLACK:
-                        char = char.lower()
-                    fen_row += char
-            if empty:
-                fen_row += str(empty)
-            fen_rows.append(fen_row)
+    # <editor-fold desc = "BOARD_HELPER">
+    def is_square_attacked(self, square: SquarePosition, my_color: ChessColor) -> bool:
+        """The Laser Eyes. Shoots rays outward to find enemy threats."""
+        enemy_color = OTHER_COLOR[my_color]
 
-        placement = "/".join(fen_rows)
-        active = "w" if self.active_color == ChessColor.WHITE else "b"
-        castling = self.castling_rights or "-"
-        en_passant = self.en_passant or "-"
-        return f"{placement} {active} {castling} {en_passant} {self.halfmove_clock} {self.fullmove_number}"
+        # 1. Straight Lasers (Looking for Rooks and Queens)
+        directions_straight = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        for dr, dc in directions_straight:
+            r, c = square.row + dr, square.col + dc
+            while 0 <= r < 8 and 0 <= c < 8:
+                target = self.grid[r][c]
+                if target is not None:
+                    if target.color == enemy_color and target.type in (ChessPieceType.ROOK, ChessPieceType.QUEEN):
+                        return True
+                    break  # Blocked by a piece (friendly, or non-threatening enemy)
+                r += dr
+                c += dc
+
+        # 2. Diagonal Lasers (Looking for Bishops and Queens)
+        directions_diag = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        for dr, dc in directions_diag:
+            r, c = square.row + dr, square.col + dc
+            while 0 <= r < 8 and 0 <= c < 8:
+                target = self.grid[r][c]
+                if target is not None:
+                    if target.color == enemy_color and target.type in (ChessPieceType.BISHOP, ChessPieceType.QUEEN):
+                        return True
+                    break
+                r += dr
+                c += dc
+
+        # 3. L-Shape Lasers (Looking for Knights)
+        knight_moves = [(2, 1), (2, -1), (1, 2), (1, -2), (-1, 2), (-1, -2), (-2, 1), (-2, -1)]
+        for dr, dc in knight_moves:
+            r, c = square.row + dr, square.col + dc
+            if 0 <= r < 8 and 0 <= c < 8:
+                target = self.grid[r][c]
+                if target is not None and target.color == enemy_color and target.type == ChessPieceType.KNIGHT:
+                    return True
+
+        # 4. Pawn Check (Looking for Pawns)
+        # WARNING: If I am White, enemy pawns attack DOWN (+1 row).
+        # So I must look UP (-1 row) to find them!
+        pawn_direction = -1 if my_color == ChessColor.WHITE else 1
+        for dc in (-1, 1):
+            r, c = square.row + pawn_direction, square.col + dc
+            if 0 <= r < 8 and 0 <= c < 8:
+                target = self.grid[r][c]
+                if target is not None and target.color == enemy_color and target.type == ChessPieceType.PAWN:
+                    return True
+
+        # 5. King Check (Are we too close to the enemy king?)
+        king_moves = directions_straight + directions_diag
+        for dr, dc in king_moves:
+            r, c = square.row + dr, square.col + dc
+            if 0 <= r < 8 and 0 <= c < 8:
+                target = self.grid[r][c]
+                if target is not None and target.color == enemy_color and target.type == ChessPieceType.KING:
+                    return True
+
+        return False
+
+    def undo_move(self):
+        """Reads the last page of the diary and reverses time."""
+        if len(self.move_log) == 0:
+            return False
+
+        # 1. Open the Diary and rip out the last page
+        record = self.move_log.pop()
+        move = record.move
+
+        # 2. Grab the actors from the photograph
+        piece = record.moved_piece
+        victim = record.victim_piece
+
+        # 3. SPECIAL CASE: Undo Castling
+        if move.move_type == MoveType.CASTLE:
+            # Recreate your exact math to find where the King and Rook landed
+            direction = 1 if move.to_pos.col > move.from_pos.col else -1
+            king_new_col = move.from_pos.col + (2 * direction)
+            rook_new_col = king_new_col - direction
+
+            # Grab the Rook from its new spot
+            rook = self.grid[move.from_pos.row][rook_new_col]
+
+            # Erase them from their new spots
+            self.grid[move.from_pos.row][king_new_col] = None
+            self.grid[move.from_pos.row][rook_new_col] = None
+
+            # Put them back where they started
+            self.grid[move.from_pos.row][move.from_pos.col] = piece
+            self.grid[move.to_pos.row][move.to_pos.col] = rook
+
+            piece.position = move.from_pos
+            rook.position = move.to_pos
+
+            # Restore their 'has_moved' status
+            piece.has_moved = record.piece_had_moved
+            rook.has_moved = False  # It hadn't moved if we were allowed to castle!
+
+        else:
+            # 4. NORMAL UNDO (Moves, Captures, En Passant, Promotions)
+
+            # Erase whatever is on the destination square (the piece, or the new Promotion Queen)
+            self.grid[move.to_pos.row][move.to_pos.col] = None
+
+            # Put the original piece back where it started
+            self.grid[move.from_pos.row][move.from_pos.col] = piece
+            piece.position = move.from_pos
+            piece.has_moved = record.piece_had_moved
+
+            # Bring the dead back to life!
+            if victim is not None:
+                self.grid[move.victim_pos.row][move.victim_pos.col] = victim
+                victim.position = move.victim_pos
+
+        # 5. Restore the Board's memories
+        self.en_passant = record.old_en_passant
+        self.castling_rights = record.old_castling_rights
+
+        # 6. Give the turn back and recalculate check
+        self.switch_turn()
+        self.update_game_state()
+
+        return True
+
+    # </editor-fold>
 
 
 # </editor-fold>
-
 
 # <editor-fold desc="DRAWING">
 def get_image_path(color: ChessColor, piece_type: ChessPieceType):
     return f"assets/sliced_pieces/{color.value}_{piece_type.name}.png"
 
-def draw_board(screen):
+
+def draw_board(screen, show_notation: bool = False):
     for row in range(8):
         for col in range(8):
-            color = LIGHT if (row + col) % 2 == 0 else DARK
-            pygame.draw.rect(
-                screen,
-                color,
-                (col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
-            )
+            # 1. Paint the wood
+            is_light_square = (row + col) % 2 == 0
+            color = LIGHT if is_light_square else DARK
+            pygame.draw.rect(screen, color, (col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
+
+            # 2. Paint the notation if the toggle is ON
+            if show_notation and NOTATION_FONT is not None:
+                # Get the text (e.g., 'a8') and capitalize it ('A8')
+                notation_text = row_col_to_notation(row, col).lower()
+
+                # Make the text color the opposite of the wood color
+                text_color = DARK if is_light_square else LIGHT
+
+                # Carve the stamp and press it into the bottom left corner
+                text_surface = NOTATION_FONT.render(notation_text, True, text_color)
+
+                # Math: x is just past the left edge, y is just above the bottom edge
+                x_pos = col * SQUARE_SIZE + 4
+                y_pos = (row + 1) * SQUARE_SIZE - 18
+                screen.blit(text_surface, (x_pos, y_pos))
+
+def draw_side_menu(screen,show_notation):
+    """Paints the side control panel, clocks, and buttons."""
+    # 1. Menu Background
+    pygame.draw.rect(screen, (30, 30, 30), (WINDOW_SIZE, 0, MENU_WIDTH, SCREEN_HEIGHT))
+    pygame.draw.line(screen, (100, 100, 100), (WINDOW_SIZE, 0), (WINDOW_SIZE, SCREEN_HEIGHT), 2)  # Border
+
+    pygame.font.init()
+    font_large = pygame.font.SysFont("Arial", 32, bold=True)
+    font_small = pygame.font.SysFont("Arial", 20, bold=True)
+
+    # 2. Black's Clock Placeholder (Top)
+    pygame.draw.rect(screen, (20, 20, 20), (WINDOW_SIZE + 25, 20, 150, 60))
+    pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 25, 20, 150, 60), 2)
+    b_clock_txt = font_large.render("10:00", True, (255, 255, 255))
+    screen.blit(b_clock_txt, (WINDOW_SIZE + 60, 30))
+
+    # 3. White's Clock Placeholder (Bottom)
+    pygame.draw.rect(screen, (220, 220, 220), (WINDOW_SIZE + 25, SCREEN_HEIGHT - 80, 150, 60))
+    pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 25, SCREEN_HEIGHT - 80, 150, 60), 2)
+    w_clock_txt = font_large.render("10:00", True, (0, 0, 0))
+    screen.blit(w_clock_txt, (WINDOW_SIZE + 60, SCREEN_HEIGHT - 70))
+
+    # 4. The Undo Button (Middle)
+    # Highlight it if the mouse is hovering over it!
+    mouse_pos = pygame.mouse.get_pos()
+    btn_color = (120, 120, 150) if UNDO_BTN_RECT.collidepoint(mouse_pos) else (80, 80, 100)
+
+    pygame.draw.rect(screen, btn_color, UNDO_BTN_RECT)
+    pygame.draw.rect(screen, (200, 200, 200), UNDO_BTN_RECT, 2)
+
+    undo_txt = font_small.render("Undo Move", True, (255, 255, 255))
+    undo_rect = undo_txt.get_rect(center=UNDO_BTN_RECT.center)
+    screen.blit(undo_txt, undo_rect)
+
+    # 5. The Notation Toggle Button
+    mouse_pos = pygame.mouse.get_pos()
+
+    # Change color based on Hover AND if it's currently toggled ON
+    if show_notation:
+        btn_color = (100, 180, 100) if NOTATION_BTN_RECT.collidepoint(mouse_pos) else (80, 150, 80)  # Green
+    else:
+        btn_color = (150, 100, 100) if NOTATION_BTN_RECT.collidepoint(mouse_pos) else (120, 80, 80)  # Red
+
+    pygame.draw.rect(screen, btn_color, NOTATION_BTN_RECT)
+    pygame.draw.rect(screen, (200, 200, 200), NOTATION_BTN_RECT, 2)
+
+    toggle_txt = font_small.render("Notation: ON" if show_notation else "Notation: OFF", True, (255, 255, 255))
+    toggle_rect = toggle_txt.get_rect(center=NOTATION_BTN_RECT.center)
+    screen.blit(toggle_txt, toggle_rect)
 
 def get_piece_image(piece: ChessPiece, cache):
-    key = (piece.color, piece.type)
+    return get_piece_image_with_color_and_type(piece.color, piece.type, cache)
+
+
+def get_piece_image_with_color_and_type(color, piece_type, cache):
+    key = (color, piece_type)
     if key not in cache:
-        img = pygame.image.load(get_image_path(piece.color, piece.type)).convert_alpha()
-        img = pygame.transform.smoothscale(img, (int(SQUARE_SIZE * 0.85), int(SQUARE_SIZE * 0.85)))
-        cache[key] = img
+        try:
+            img = pygame.image.load(get_image_path(color, piece_type)).convert_alpha()
+            img = pygame.transform.smoothscale(img, (int(SQUARE_SIZE * 0.85), int(SQUARE_SIZE * 0.85)))
+            cache[key] = img
+        except FileNotFoundError:
+            # Fallback for debugging if assets are missing
+            img = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE))
+            img.fill((255, 0, 0) if color == ChessColor.WHITE else (0, 0, 255))
+            cache[key] = img
     return cache[key]
 
+
 def draw_piece(screen, piece: ChessPiece, cache):
-    if piece.position is None:
-        return
-    row = piece.position.row
-    col = piece.position.col
+    if piece.position is None: return
+    row, col = piece.position.row, piece.position.col
     img = get_piece_image(piece, cache)
-    rect = img.get_rect(center=(
-        col * SQUARE_SIZE + SQUARE_SIZE // 2,
-        row * SQUARE_SIZE + SQUARE_SIZE // 2
-    ))
+    rect = img.get_rect(center=(col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2))
     screen.blit(img, rect)
 
-def draw_pieces(screen, board: Board, cache):
-    for piece in board.get_all_pieces():
-        draw_piece(screen, piece, cache)
-# </editor-fold>
 
+def draw_pieces(screen, board: Board, cache, dragged_piece=None):
+    for piece in board.get_all_pieces():
+        # Do not draw the piece if it is currently being dragged!
+        if piece is not dragged_piece:
+            draw_piece(screen, piece, cache)
+
+
+def highlight_square(screen, square: SquarePosition, color: tuple, alpha: int = 125, thickness: int = 8):
+    """Lays a see-through highlight over a square.
+       If thickness > 0, it draws a hollow picture frame instead."""
+    if square is None:
+        return
+
+    # 1. Create a special piece of glass that is 100% invisible by default
+    glass_pane = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
+
+    # 2. Mix the RGB paint with the Alpha (transparency)
+    rgba_color = (color[0], color[1], color[2], alpha)
+
+    # 3. Paint the rectangle on the glass.
+    # If thickness is 0, it fills the whole glass.
+    # If thickness is 5, it just paints a 5-pixel border.
+    pygame.draw.rect(glass_pane, rgba_color, glass_pane.get_rect(), width=thickness)
+
+    # 4. Calculate exactly where to put it on the floor
+    x = square.col * SQUARE_SIZE
+    y = square.row * SQUARE_SIZE
+
+    # 5. Lay it down
+    screen.blit(glass_pane, (x, y))
+
+def get_square_center(pos: SquarePosition):
+    """Returns the exact (x, y) pixel coordinates of the middle of a square."""
+    x = pos.col * SQUARE_SIZE + SQUARE_SIZE // 2
+    y = pos.row * SQUARE_SIZE + SQUARE_SIZE // 2
+    return x, y
+
+
+def draw_arrow(screen, start_pos: SquarePosition, end_pos: SquarePosition, color: tuple, alpha: int = 150,
+               thickness: int = 6):
+    """Draws a transparent arrow between two squares using some trigonometry."""
+    if start_pos == end_pos or start_pos is None or end_pos is None:
+        return
+
+    # 1. Get the pixel centers
+    start_x, start_y = get_square_center(start_pos)
+    end_x, end_y = get_square_center(end_pos)
+
+    # 2. Create the invisible glass pane
+    glass_pane = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE), pygame.SRCALPHA)
+    rgba_color = (color[0], color[1], color[2], alpha)
+
+    # 3. Calculate the angle FIRST
+    angle = math.atan2(end_y - start_y, end_x - start_x)
+
+    # --- THE ONLY CHANGE: SNIP THE LINE ---
+    # We walk 18 pixels backward from the tip. Increase this number to make the line even shorter.
+    snip_length = 18
+    line_end_x = end_x - snip_length * math.cos(angle)
+    line_end_y = end_y - snip_length * math.sin(angle)
+
+    # 4. Draw the main stick stopping at the snipped length
+    pygame.draw.line(glass_pane, rgba_color, (start_x, start_y), (line_end_x, line_end_y), thickness)
+
+    # 5. The Math: Calculate the Arrowhead using the ORIGINAL end_x and end_y
+    arrow_length = 20
+    arrow_angle = math.pi / 6  # 30 degrees for the pointy bits
+
+    # Find the two corners of the triangle
+    x1 = end_x - arrow_length * math.cos(angle - arrow_angle)
+    y1 = end_y - arrow_length * math.sin(angle - arrow_angle)
+    x2 = end_x - arrow_length * math.cos(angle + arrow_angle)
+    y2 = end_y - arrow_length * math.sin(angle + arrow_angle)
+
+    # Draw the solid triangle at the end
+    pygame.draw.polygon(glass_pane, rgba_color, [(end_x, end_y), (x1, y1), (x2, y2)])
+
+    # 6. Lay the glass pane over the board
+    screen.blit(glass_pane, (0, 0))
+
+
+def draw_game_over_screen(screen, winner_color: ChessColor):
+    # 1. Dim the background so the board looks "finished"
+    dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+    dim_surface.set_alpha(180)  # 0 is clear, 255 is solid black
+    dim_surface.fill((0, 0, 0))
+    screen.blit(dim_surface, (0, 0))
+
+    # 2. Draw the menu box in the dead center
+    menu_width = 300
+    menu_height = 160
+    start_x = (WINDOW_SIZE - menu_width) // 2
+    start_y = (WINDOW_SIZE - menu_height) // 2
+
+    pygame.draw.rect(screen, (40, 40, 40), (start_x, start_y, menu_width, menu_height))
+    pygame.draw.rect(screen, (220, 220, 220), (start_x, start_y, menu_width, menu_height), 4)
+
+    # 3. Draw the Winner Text
+    pygame.font.init()  # Ensure fonts are ready
+    font_large = pygame.font.SysFont("Arial", 40, bold=True)
+    font_small = pygame.font.SysFont("Arial", 28, bold=True)
+
+    text = f"{winner_color.value} WINS!"
+    text_surface = font_large.render(text, True, (255, 255, 255))
+    text_rect = text_surface.get_rect(center=(WINDOW_SIZE // 2, start_y + 45))
+    screen.blit(text_surface, text_rect)
+
+    # 4. Draw the "Again?" Button
+    btn_width = 140
+    btn_height = 50
+    btn_rect = pygame.Rect(0, 0, btn_width, btn_height)
+    btn_rect.center = (WINDOW_SIZE // 2, start_y + 110)
+
+    pygame.draw.rect(screen, (100, 200, 100), btn_rect)
+    pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
+
+    btn_text = font_small.render("Again?", True, (0, 0, 0))
+    btn_text_rect = btn_text.get_rect(center=btn_rect.center)
+    screen.blit(btn_text, btn_text_rect)
+
+    # Return the invisible button box so the mouse clicker knows where it is
+    return btn_rect
+
+# </editor-fold>
 
 # <editor-fold desc="GLOBAL VARIABLES">
 PYGAME = pygame
 SCREEN = None
-
-# Initialize dict first to avoid NameError if Board tries to access it
 PLAYERS = {}
-
 BOARD = Board()
-
-# Now populate Players
 PLAYERS[ChessColor.WHITE] = Player(BOARD, ChessColor.WHITE)
 PLAYERS[ChessColor.BLACK] = Player(BOARD, ChessColor.BLACK)
-
 IMAGE_CACHE = {}
 
+NOTATION_FONT = None  # We will initialize this inside main()
+
+
+# </editor-fold>
+
+# <editor-fold desc="PROMOTION MENU">
+def draw_promotion_menu(screen, color: ChessColor, cache):
+    # 1. Dim the background so the board looks "paused"
+    dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+    dim_surface.set_alpha(150)  # 0 is clear, 255 is solid black
+    dim_surface.fill((0, 0, 0))
+    screen.blit(dim_surface, (0, 0))
+
+    # 2. Draw the white menu box in the dead center
+    menu_width = 4 * SQUARE_SIZE
+    menu_height = SQUARE_SIZE
+    start_x = (WINDOW_SIZE - menu_width) // 2
+    start_y = (WINDOW_SIZE - menu_height) // 2
+
+    pygame.draw.rect(screen, (220, 220, 220), (start_x, start_y, menu_width, menu_height))
+    pygame.draw.rect(screen, (50, 50, 50), (start_x, start_y, menu_width, menu_height), 3)
+
+    # 3. Draw the 4 pieces and save their invisible clickable boxes
+    pieces = [ChessPieceType.QUEEN, ChessPieceType.ROOK, ChessPieceType.BISHOP, ChessPieceType.KNIGHT]
+    clickable_areas = []
+
+    for i, ptype in enumerate(pieces):
+        img = get_piece_image_with_color_and_type(color, ptype, cache)
+
+        # Calculate exact center for this piece's slot
+        center_x = start_x + (i * SQUARE_SIZE) + (SQUARE_SIZE // 2)
+        center_y = start_y + (SQUARE_SIZE // 2)
+
+        rect = img.get_rect(center=(center_x, center_y))
+        screen.blit(img, rect)
+
+        # Save the box and the piece type it represents
+        clickable_areas.append((rect, ptype))
+
+    return clickable_areas
 
 
 # </editor-fold>
@@ -805,18 +1202,29 @@ IMAGE_CACHE = {}
 
 # <editor-fold desc="MAIN">
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE,WHITE_PLAYER,BLACK_PLAYER,PLAYERS
+    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS,NOTATION_FONT
 
     pygame.init()
-    SCREEN = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
+    NOTATION_FONT = pygame.font.SysFont("Arial", 14, bold=True)
+    SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED|pygame.RESIZABLE)
     pygame.display.set_caption("Chess")
     clock = pygame.time.Clock()
     BOARD.load_fen(STARTING_POSITION)
     IMAGE_CACHE = {}
 
-
-
     picking_piece: ChessPiece | None = None
+    is_dragging = False
+
+    # THE STATE MACHINE TRIGGER
+    promotion_pending: Move | None = None
+    promotion_rects = []
+
+    # ARROW MEMORY
+    drawn_arrows = set()
+    right_click_start = None
+    game_over_btn_rect = None
+    show_notation = False
+    is_fullscreen = False
 
     running = True
     while running:
@@ -824,48 +1232,193 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_LEFT:
+                    BOARD.undo_move()
+                    # Cancel any active UI states so the board doesn't glitch
+                    picking_piece = None
+                    is_dragging = False
+                    promotion_pending = None
+                    drawn_arrows.clear()
+
+                # --- FULLSCREEN TOGGLE ---
+                elif event.key == pygame.K_F11:
+                    is_fullscreen = not is_fullscreen
+                    if is_fullscreen:
+                        # Turn on Fullscreen AND the Projector
+                        SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT),
+                                                         pygame.FULLSCREEN | pygame.SCALED)
+                    else:
+                        # Go back to Windowed Mode with the Projector
+                        SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED)
+
+            # ==========================================
+            # THE PICK UP (Mouse Down)
+            # ==========================================
             if event.type == pygame.MOUSEBUTTONDOWN:
-                clicked = pixel_to_squarepos(event.pos)
-                if clicked is None:
-                    continue
 
-                clicked_piece = BOARD.get_piece_at(clicked)
+                # --- LEFT CLICK (Normal Play) ---
+                if event.button == 1:
 
-                if clicked_piece is not None:
-                    # selecting your own piece
+                    # 1. UI BUTTON INTERCEPT
+                    if UNDO_BTN_RECT.collidepoint(event.pos):
+                        print("yes")
+                        BOARD.undo_move()
+                        drawn_arrows.clear()
+                        picking_piece = None
+                        is_dragging = False
+                        promotion_pending = None
+                        continue  # STOP HERE! Do not try to move chess pieces!
 
-                    if clicked_piece.color == BOARD.active_color and picking_piece is None:
-                        picking_piece = clicked_piece
+                    if NOTATION_BTN_RECT.collidepoint(event.pos):
+                        show_notation = not show_notation  # Flip the switch!
+                        continue # STOP HERE! Do not try to move chess pieces!
 
-                    elif picking_piece is not None and clicked_piece.color == BOARD.active_color and (
-                         clicked_piece.color == picking_piece.color
-                    ):
-                        if can_castle(BOARD,picking_piece,clicked_piece):
-                            perform_castle()
+                    # 2. IS THE GAME OVER? THE GLASS CASE BOUNCER
+                    if game_over_btn_rect is not None:
+                        if game_over_btn_rect.collidepoint(event.pos): #they clicked again
+
+                            for p in PLAYERS:
+                                if p is not None: p.is_in_checkmate = False
+
+                            BOARD.load_fen(STARTING_POSITION)
+                            drawn_arrows.clear()
                             picking_piece = None
+                            is_dragging = False
 
-                        else: picking_piece = clicked_piece
-                    # capturing opponent
-                    elif (picking_piece is not None and clicked_piece.color != picking_piece.color
-                          and picking_piece.is_valid_move(clicked)):
-                        BOARD.move_piece(picking_piece.position, clicked_piece.position)
-                        picking_piece = None
-                else:
-                    # moving to empty square
-                    if picking_piece is not None and picking_piece.is_valid_move(clicked):
-                        BOARD.move_piece(picking_piece.position, clicked)
-                        picking_piece = None
 
+                        # If the glass case is down, DO NOT let them click the board.
+                        continue
+
+                    drawn_arrows.clear()  # Erase all arrows on left click!
+                    right_click_start = None
+
+                    if promotion_pending is not None:
+                        for rect, piece_type in promotion_rects:
+                            if rect.collidepoint(event.pos):
+                                promotion_pending.promotion_choice = piece_type
+                                BOARD.execute_move(promotion_pending)
+                                promotion_pending = None
+                                picking_piece = None
+                                is_dragging = False
+                                break
+                        continue
+
+                    clicked = pixel_to_squarepos(event.pos)
+                    if clicked is None: continue
+
+                    clicked_piece = BOARD.get_piece_at(clicked)
+
+                    # 1. Grab a piece to drag
+                    if clicked_piece is not None and clicked_piece.color == BOARD.active_color:
+                        picking_piece = clicked_piece
+                        is_dragging = True
+
+                    # 2. Hybrid Click-to-Move (if they clicked an empty square or enemy without dragging)
+                    elif picking_piece is not None:
+                        if picking_piece.is_valid_move(clicked):
+                            move = picking_piece.legal_moves[clicked]
+                            if move.move_type == MoveType.PROMOTION:
+                                promotion_pending = move
+                            else:
+                                BOARD.execute_move(move)
+                                picking_piece = None
+
+
+                # --- RIGHT CLICK (Start Arrow) ---
+                elif event.button == 3:
+                    right_click_start = pixel_to_squarepos(event.pos)
+
+            # ==========================================
+            # THE DROP (Mouse Up)
+            # ==========================================
+            elif event.type == pygame.MOUSEBUTTONUP:
+
+                # --- LEFT CLICK (Drop Piece) ---
+                if event.button == 1:
+                    if is_dragging and picking_piece is not None:
+                        is_dragging = False
+                        drop_pos = pixel_to_squarepos(event.pos)
+
+                        # If they dropped it on a new square
+                        if drop_pos is not None and drop_pos != picking_piece.position:
+                            dropped_on_piece = BOARD.get_piece_at(drop_pos)
+
+                            # Normal Drag Move Check
+                            if picking_piece.is_valid_move(drop_pos):
+                                move = picking_piece.legal_moves[drop_pos]
+                                if move.move_type == MoveType.PROMOTION:
+                                    promotion_pending = move
+                                else:
+                                    BOARD.execute_move(move)
+                                    picking_piece = None
+                            else:
+                                picking_piece = None  # that's how I want it to be
+
+                # --- RIGHT CLICK (Finish Arrow) ---
+                elif event.button == 3:
+                    if right_click_start is not None:
+                        right_click_end = pixel_to_squarepos(event.pos)
+
+                        if right_click_start != right_click_end and right_click_end is not None:
+                            arrow_tuple = (right_click_start, right_click_end)
+
+                            # Toggle behavior
+                            if arrow_tuple in drawn_arrows:
+                                drawn_arrows.remove(arrow_tuple)
+                            else:
+                                drawn_arrows.add(arrow_tuple)
+                        right_click_start = None
+
+        # --- DRAWING PHASE ---
         SCREEN.fill((0, 0, 0))
-        draw_board(SCREEN)
-        draw_pieces(SCREEN, BOARD, IMAGE_CACHE)
+        draw_board(SCREEN,show_notation)
+
+        draw_side_menu(SCREEN,show_notation)
+
+        # Draw all pieces EXCEPT the one being dragged
+        dragged_piece = picking_piece if is_dragging else None
+        draw_pieces(SCREEN, BOARD, IMAGE_CACHE, dragged_piece)
+
+        # Draw the "Ghost Piece" directly on the mouse cursor
+        if is_dragging and picking_piece is not None:
+            img = get_piece_image(picking_piece, IMAGE_CACHE)
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            rect = img.get_rect(center=(mouse_x, mouse_y))
+            SCREEN.blit(img, rect)
+
+        # Draw the highlights that a piece needs.
+        if picking_piece is not None:
+            highlight_square(SCREEN, picking_piece.position, PICKING_PIECE_HIGHLIGHT_COLOR)
+            for legal_pos in picking_piece.legal_moves.keys():
+                highlight_square(SCREEN, legal_pos, LEGAL_MOVES_HIGHLIGHT_COLOR, thickness=5)
+
+        # Draw the Arrows
+        for start_pos, end_pos in drawn_arrows:
+            draw_arrow(SCREEN, start_pos, end_pos, (255, 170, 0))  # Orange arrows
+
+        # Draw the Menu OVER everything if we are frozen
+        if promotion_pending is not None:
+            color = BOARD.active_color
+            promotion_rects = draw_promotion_menu(SCREEN, color, IMAGE_CACHE)
+
+        # --- THE CHECKMATE SCREEN ---
+        winner = None
+        if PLAYERS[ChessColor.WHITE].is_in_checkmate:
+            winner = ChessColor.BLACK
+        elif PLAYERS[ChessColor.BLACK].is_in_checkmate:
+            winner = ChessColor.WHITE
+
+        if winner is not None:
+            game_over_btn_rect = draw_game_over_screen(SCREEN, winner)
+        else:
+            game_over_btn_rect = None
 
         pygame.display.flip()
         clock.tick(FPS)
 
     pygame.quit()
     sys.exit()
-
 if __name__ == "__main__":
     main()
 # </editor-fold>
