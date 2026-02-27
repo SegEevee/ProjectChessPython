@@ -9,7 +9,7 @@ from pygame.display import is_fullscreen
 #<editor-fold desc="FILES">
 GAME_INDEX_FILE = "saved_games/curr_num_of_game.txt"
 DIRECTORY_OF_SAVED_GAMES = "saved_games"
-#</>
+#</editor-fold>
 # <editor-fold desc="CONFIG">
 BOARD_SIZE = 8
 SQUARE_SIZE = 80
@@ -126,6 +126,7 @@ def create_new_chess_file(board):
     pgn = generate_pgn(board.move_log)
     create_file(f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt", pgn)
     change_file(GAME_INDEX_FILE, str(number_of_game + 1))
+#</editor-fold>
 
 #<editor-fold desc="FILE HANDLING">
 
@@ -193,6 +194,8 @@ class ChessColor(Enum):
     BLACK = "BLACK"
 
 
+
+
 OTHER_COLOR = {ChessColor.WHITE: ChessColor.BLACK, ChessColor.BLACK: ChessColor.WHITE}
 
 
@@ -241,6 +244,7 @@ class ChessClock:
         self.remaining = starting_time
         self.ms = 0 #will be from 0-1
         self.is_running = False
+        self.previous_time = starting_time
 
     def tick(self):
         if not self.is_running: return
@@ -254,18 +258,24 @@ class ChessClock:
         self.is_running = False
     def switch(self):
         self.is_running = not self.is_running
+        self.previous_time = self.remaining
+
     def change_starting_time(self,new_starting_time):
         self.starting_time = new_starting_time
         self.remaining = new_starting_time
     def reset(self):
         self.remaining = self.starting_time
         self.is_running = False
-    def __bool__(self):
-        return self.remaining != 0
-
-    def __str__(self):
+    def restore_time(self, seconds):
+        self.remaining = seconds
+        self.ms = 0
+    def standard_notation(self) -> str:
         return f"{int(self.remaining/60):02d}:{self.remaining%60:02d}"
 
+    def __bool__(self):
+        return self.remaining != 0
+    def __str__(self) -> str:
+        return self.remaining
 #</>
 
 # <editor-fold desc="PIECE_HELPER">
@@ -566,13 +576,19 @@ class King(ChessPiece):
 
 class MoveRecord:
     """A single page in the Diary, holding a photograph of the past."""
-    def __init__(self, move: Move, moved_piece, piece_had_moved: bool, victim_piece, old_en_passant, old_castling_rights):
+    def __init__(self, move: Move, moved_piece, piece_had_moved: bool, victim_piece,clocks, old_en_passant, old_castling_rights,algebraic_notation):
         self.move = move
+
         self.moved_piece = moved_piece
         self.piece_had_moved = piece_had_moved
         self.victim_piece = victim_piece
+
+        self.current_times = {ChessColor.WHITE: clocks[ChessColor.WHITE].previous_time, ChessColor.BLACK: clocks[ChessColor.BLACK].previous_time}
+
         self.old_en_passant = old_en_passant
         self.old_castling_rights = old_castling_rights
+
+        self.algebraic_notation = algebraic_notation
 
 # </editor-fold>
 
@@ -738,6 +754,60 @@ class Board:
         # Smash it all together
         return f"{board_part} {active_part} {castling_part} {ep_part} {halfmove} {fullmove}"
 
+    def get_algebraic_notation(self, move, piece, victim):
+        """Calculates the exact SAN string for a move before it happens."""
+        # 1. Castling
+        if move.move_type == MoveType.CASTLE:
+            if move.to_pos.col > move.from_pos.col:
+                return "O-O"
+            else:
+                return "O-O-O"
+
+        san = ""
+        is_pawn = piece.type == ChessPieceType.PAWN
+
+        # 2. Piece Letter & DISAMBIGUATION
+        if not is_pawn:
+            san += piece.type.value
+
+            # THE DISAMBIGUATION TEST: Scan the whole board for clones
+            clones = []
+            for r in range(BOARD_SIZE):
+                for c in range(BOARD_SIZE):
+                    other = self.grid[r][c]
+                    # Is it the exact same type, same color, but NOT the piece we are moving?
+                    if other is not None and other != piece and other.type == piece.type and other.color == piece.color:
+                        # Can this clone also hit the exact same destination square?
+                        if move.to_pos in other.legal_moves:
+                            clones.append(other)
+
+            if clones:
+                # We have a conflict! We must disambiguate.
+                # Do any of the clones share the exact same column (File) as our piece?
+                same_col = any(c.position.col == piece.position.col for c in clones)
+
+                if not same_col:
+                    # They are in different columns. Use the letter (e.g., Nbd7)
+                    san += move.from_pos.to_notation()[0]
+                else:
+                    # They are in the SAME column. Use the number (e.g., R1a3)
+                    san += move.from_pos.to_notation()[1]
+
+                    # 3. Captures
+        if victim is not None or move.move_type == MoveType.EN_PASSANT:
+            if is_pawn:
+                san += move.from_pos.to_notation()[0]  # Pawns always show their starting file on a capture
+            san += "x"
+
+        # 4. Destination
+        san += move.to_pos.to_notation()
+
+        # 5. Promotion
+        if move.move_type == MoveType.PROMOTION and move.promotion_choice is not None:
+            san += f"={move.promotion_choice.value}"
+
+        return san
+
     def get_piece_at(self, position: SquarePosition) -> ChessPiece | None:
         return self.grid[position.row][position.col]
 
@@ -830,15 +900,21 @@ class Board:
         # Find out if anyone is about to die
         victim = self.get_piece_at(move.victim_pos) if move.victim_pos else None
 
+        san_string = self.get_algebraic_notation(move, piece, victim)
+
         # Take the photograph
         record = MoveRecord(
             move=move,
             moved_piece=piece,
             piece_had_moved=piece.has_moved,
+            clocks=CLOCKS,
             victim_piece=victim,
             old_en_passant=self.en_passant,
-            old_castling_rights=self.castling_rights
+            old_castling_rights=self.castling_rights,
+            algebraic_notation=san_string
         )
+
+
 
         # Save it in the book
         self.move_log.append(record)
@@ -1033,11 +1109,18 @@ class Board:
         self.en_passant = record.old_en_passant
         self.castling_rights = record.old_castling_rights
 
-        # 6. Give the turn back and recalculate check
+        #6. Restore the clock time
+        for color in ChessColor:
+            CLOCKS[color].remaining = record.current_times[color]
+
+        # 7. Give the turn back and recalculate check
         self.switch_turn()
         self.update_game_state()
 
         return True
+
+
+
 
     # </editor-fold>
 
@@ -1088,14 +1171,14 @@ def draw_side_menu(screen, show_notation: bool):
     pygame.draw.rect(screen, (20, 20, 20), (WINDOW_SIZE + 25, 20, 150, 60))
     pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 25, 20, 150, 60), 2)
 
-    b_clock_txt = font_large.render(str(CLOCKS[ChessColor.BLACK]), True, (255, 255, 255))
+    b_clock_txt = font_large.render(CLOCKS[ChessColor.BLACK].standard_notation(), True, (255, 255, 255))
     screen.blit(b_clock_txt, (WINDOW_SIZE + 60, 30))
 
     # 3. White's Clock (Bottom) - USING YOUR CHESSCLOCK __STR__
     pygame.draw.rect(screen, (220, 220, 220), (WINDOW_SIZE + 25, SCREEN_HEIGHT - 80, 150, 60))
     pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 25, SCREEN_HEIGHT - 80, 150, 60), 2)
 
-    w_clock_txt = font_large.render(str(CLOCKS[ChessColor.WHITE]), True, (0, 0, 0))
+    w_clock_txt = font_large.render(CLOCKS[ChessColor.WHITE].standard_notation(), True, (0, 0, 0))
     screen.blit(w_clock_txt, (WINDOW_SIZE + 60, SCREEN_HEIGHT - 70))
 
     mouse_pos = pygame.mouse.get_pos()
