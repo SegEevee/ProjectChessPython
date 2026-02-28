@@ -4,12 +4,13 @@ import math
 from enum import Enum
 
 
-from pygame.display import is_fullscreen
 
 #<editor-fold desc="FILES">
 GAME_INDEX_FILE = "saved_games/curr_num_of_game.txt"
 DIRECTORY_OF_SAVED_GAMES = "saved_games"
 #</editor-fold>
+
+
 
 # <editor-fold desc="CONFIG">
 BOARD_SIZE = 8
@@ -20,20 +21,42 @@ MENU_WIDTH = 200
 SCREEN_WIDTH = WINDOW_SIZE + MENU_WIDTH
 SCREEN_HEIGHT = WINDOW_SIZE
 
-# Pre-calculate the UI hitboxes
-# The total group height is 170px. We pull the top button up by 85px to perfectly center the group.
-UNDO_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, (SCREEN_HEIGHT // 2) - 85, 150, 50)
+#<editor-fold desc="MAIN MENU CONFIG">
+
+# --- HOME PAGE RECTS ---
+# Centered mathematically based on SCREEN_WIDTH and SCREEN_HEIGHT
+START_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 125, (SCREEN_HEIGHT // 2) - 40, 250, 80)
+QUIT_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 125, (SCREEN_HEIGHT // 2) + 60, 250, 80)
+SETTINGS_BTN_RECT = pygame.Rect(SCREEN_WIDTH - 60, 20, 40, 40)
+
+#</editor-fold>
+
+
+# 1. The Pause Button is the new engine at the top
+PAUSE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, (SCREEN_HEIGHT // 2) - 120, 150, 50)
+
+# 2. Undo hitches to Pause
+UNDO_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, PAUSE_BTN_RECT.bottom + 20, 150, 50)
+
+# 3. Notation hitches to Undo
 NOTATION_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, UNDO_BTN_RECT.bottom + 20, 150, 40)
+
+# 4. Save hitches to Notation
 SAVE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, NOTATION_BTN_RECT.bottom + 20, 150, 40)
 
-# --- NEW: FLAG BUTTONS (Resign) ---
 # Clocks are now 110px wide. These 40x40 buttons sit perfectly to the right of them.
 B_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 30, 40, 40)
 W_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 70, 40, 40)
 
+# Anchored directly to the clocks/flags
+B_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 80, 40, 40)
+W_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 120, 40, 40)
+
 # --- CLOCK RECTS ---
 B_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, 20, 110, 60)
 W_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, SCREEN_HEIGHT - 80, 110, 60)
+
+
 
 FPS = 60
 
@@ -56,6 +79,14 @@ RIGHT_CLICK_HIGHLIGHT_SQUARE_COLOR = (210, 43, 43)
 
 # </editor-fold>
 
+# <editor-fold desc="GAME STATE">
+class GameState(Enum):
+    MENU = "MENU"
+    PLAYING = "PLAYING"
+#</editor-fold>
+
+
+
 # <editor-fold desc="HELPERS (notation / coordinates)">
 def notation_to_row_col(pos: str):
     pos = pos.strip().lower()
@@ -77,50 +108,17 @@ def pixel_to_squarepos(mouse_pos):
     return None
 
 
-def is_iterable_empty(iterable: iter):
-    return len(iterable) == 0
 
 
 def generate_pgn(diary: list) -> str:
-    """Translates a list of MoveRecords into a basic PGN string."""
+    """Translates a list of MoveRecords into a basic PGN string by reading the Diary."""
     pgn_moves = []
 
     for i, record in enumerate(diary):
-        move = record.move
-        piece = record.moved_piece
-        victim = record.victim_piece
+        # 1. Just read the label we already perfectly calculated!
+        san = record.algebraic_notation
 
-        # 1. Castling
-        if move.move_type == MoveType.CASTLE:
-            # If the destination column is greater than the start column, it's Kingside (Right)
-            if move.to_pos.col > move.from_pos.col:
-                san = "O-O"
-            else:
-                san = "O-O-O"
-        else:
-            san = ""
-
-            # 2. Piece Letter (Pawns are invisible in PGN notation)
-            is_pawn = piece.type == ChessPieceType.PAWN
-            if not is_pawn:
-                san += piece.type.value
-
-                # 3. Captures
-            if victim is not None:
-                if is_pawn:
-                    # Pawns must list their starting file (e.g., the 'e' in exd5)
-                    san += move.from_pos.to_notation()[0]
-                san += "x"
-
-            # 4. Destination Square
-            san += move.to_pos.to_notation()
-
-            # 5. Promotion
-            if move.move_type == MoveType.PROMOTION and move.promotion_choice is not None:
-                san += f"={move.promotion_choice.value}"
-
-        # 6. Formatting the move numbers
-        # White moves are even indexes (0, 2, 4). Black moves are odd (1, 3, 5).
+        # 2. Format the move numbers
         if i % 2 == 0:
             turn_number = (i // 2) + 1
             pgn_moves.append(f"{turn_number}. {san}")
@@ -283,7 +281,7 @@ class ChessClock:
     def __bool__(self):
         return self.remaining != 0
     def __str__(self) -> str:
-        return self.remaining
+        return str(self.remaining)
 #</>
 
 # <editor-fold desc="PIECE_HELPER">
@@ -564,7 +562,7 @@ class King(ChessPiece):
                 if target is None:
                     self.legal_moves[pos] = Move(self.position, pos)
                 elif target.color != self.color:
-                    if not self.is_piece_protected(board, pos, enemy_player):
+                    if not self.is_piece_protected(pos, enemy_player):
                         self.legal_moves[pos] = Move(self.position, pos)
 
         # --- CASTLING MOVES ---
@@ -579,7 +577,7 @@ class King(ChessPiece):
                         move_type=MoveType.CASTLE
                     )
 
-    def is_piece_protected(self, board, pos, enemy_player):
+    def is_piece_protected(self, pos, enemy_player):
         return enemy_player.is_controlling_square(pos)
 
 class MoveRecord:
@@ -674,6 +672,9 @@ class Board:
         self.en_passant = None
         self.halfmove_clock = 0
         self.fullmove_number = 1
+        self.is_draw = False
+        self.draw_offered_by = None  # Remembers who extended their hand
+        self.is_stalemate = False
 
         # --- THE DIARY ---
         self.move_log: list[MoveRecord] = []
@@ -813,7 +814,6 @@ class Board:
         # 5. Promotion
         if move.move_type == MoveType.PROMOTION and move.promotion_choice is not None:
             san += f"={move.promotion_choice.value}"
-
         return san
 
     def get_piece_at(self, position: SquarePosition) -> ChessPiece | None:
@@ -893,9 +893,21 @@ class Board:
                 enemy_player.is_in_check = False
 
         else:
+
+            # They are NOT in check.
             enemy_player.is_in_check = False
             enemy_player.lost = False
             enemy_player.king.update_all_legal_moves(self)
+            # Reprocess all their moves to be completely sure
+            for p in enemy_player.pieces:
+                p.update_all_legal_moves(self)
+            # --- THE STALEMATE TEST ---
+            # If they have absolutely zero legal moves anywhere on the board...
+            if not enemy_player.has_legal_moves():
+                self.is_stalemate = True
+                self.is_draw = True
+            else:
+                self.is_stalemate = False
 
     def execute_move(self, move: Move):
         """Replaces the old 'move_piece' and natively handles En Passant using the Move manual."""
@@ -964,6 +976,18 @@ class Board:
             self.en_passant = SquarePosition(row=mid_row, col=move.to_pos.col)
 
         self.update_game_state()
+
+        # --- THE RED PEN: Add + or # to the Diary ---
+        # The turn hasn't switched yet, so active_color is still the guy who just moved.
+        enemy_player = PLAYERS[OTHER_COLOR[self.active_color]]
+
+        if enemy_player.lost:
+            # They have no legal moves and are in check. Checkmate!
+            self.move_log[-1].algebraic_notation += "#"
+        elif enemy_player.is_in_check:
+            # They are in check, but survive to fight another day.
+            self.move_log[-1].algebraic_notation += "+"
+
         self.switch_turn()
 
     def perform_castle(self, king, rook):
@@ -1134,6 +1158,51 @@ class Board:
 # </editor-fold>
 
 # <editor-fold desc="DRAWING">
+def draw_home_page(screen):
+    # 1. Background - Deep Slate with a faint, massive checkerboard pattern
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10): # Wider to cover the menu area too
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 80, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+
+    # 2. The Title (With Drop Shadow)
+    shadow_surf = font_title.render("CHESS", True, (0, 0, 0))
+    screen.blit(shadow_surf, shadow_surf.get_rect(center=(SCREEN_WIDTH // 2 + 5, 205))) # Offset by 5px
+    title_surf = font_title.render("CHESS", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 200)))
+
+    # 3. Start Game Button
+    start_color = (80, 180, 80) if START_BTN_RECT.collidepoint(mouse_pos) else (60, 150, 60)
+    pygame.draw.rect(screen, start_color, START_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), START_BTN_RECT, 3, border_radius=15)
+    start_txt = font_btn.render("START GAME", True, (255, 255, 255))
+    screen.blit(start_txt, start_txt.get_rect(center=START_BTN_RECT.center))
+
+    # 4. Quit Game Button
+    quit_color = (180, 80, 80) if QUIT_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, quit_color, QUIT_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), QUIT_BTN_RECT, 3, border_radius=15)
+    quit_txt = font_btn.render("QUIT", True, (255, 255, 255))
+    screen.blit(quit_txt, quit_txt.get_rect(center=QUIT_BTN_RECT.center))
+
+    # 5. Settings Icon (Trigonometry Gear)
+    set_color = (255, 255, 255) if SETTINGS_BTN_RECT.collidepoint(mouse_pos) else (150, 150, 150)
+    cx, cy = SETTINGS_BTN_RECT.center
+    pygame.draw.circle(screen, set_color, (cx, cy), 12, 3) # Inner ring
+    for i in range(8):
+        angle = i * (math.pi / 4)
+        out_x = cx + 18 * math.cos(angle)
+        out_y = cy + 18 * math.sin(angle)
+        in_x = cx + 12 * math.cos(angle)
+        in_y = cy + 12 * math.sin(angle)
+        pygame.draw.line(screen, set_color, (in_x, in_y), (out_x, out_y), 4) # Teeth
+
 def get_image_path(color: ChessColor, piece_type: ChessPieceType):
     return f"assets/sliced_pieces/{color.value}_{piece_type.name}.png"
 
@@ -1163,7 +1232,7 @@ def draw_board(screen, show_notation: bool = False):
                 screen.blit(text_surface, (x_pos, y_pos))
 
 
-def draw_side_menu(screen, show_notation: bool):
+def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     """Paints the side control panel, clocks, and buttons."""
     # 1. Menu Background
     pygame.draw.rect(screen, (30, 30, 30), (WINDOW_SIZE, 0, MENU_WIDTH, SCREEN_HEIGHT))
@@ -1172,12 +1241,6 @@ def draw_side_menu(screen, show_notation: bool):
     pygame.font.init()
     font_large = pygame.font.SysFont("Arial", 32, bold=True)
     font_small = pygame.font.SysFont("Arial", 20, bold=True)
-
-
-
-    mouse_pos = pygame.mouse.get_pos()
-
-    # ... [Keep Step 1: Menu Background and Fonts exactly the same] ...
 
     mouse_pos = pygame.mouse.get_pos()
 
@@ -1211,7 +1274,23 @@ def draw_side_menu(screen, show_notation: bool):
     pygame.draw.rect(screen, (200, 200, 200), W_FLAG_BTN_RECT, 2)
     screen.blit(f_txt, f_txt.get_rect(center=W_FLAG_BTN_RECT.center))
 
-    # ... [Keep the rest of your UI buttons (Undo, Notation, Save) exactly the same] ...
+
+
+    # --- Black's Draw Button ---
+    b_draw_color = (100, 100, 150) if B_DRAW_BTN_RECT.collidepoint(mouse_pos) else (80, 80, 120)
+    pygame.draw.rect(screen, b_draw_color, B_DRAW_BTN_RECT)
+    pygame.draw.rect(screen, (200, 200, 200), B_DRAW_BTN_RECT, 2)
+    b_draw_txt = font_small.render("1/2", True, (255, 255, 255))
+    screen.blit(b_draw_txt, b_draw_txt.get_rect(center=B_DRAW_BTN_RECT.center))
+
+    # ... [Right below where you draw W_FLAG_BTN_RECT] ...
+    # --- White's Draw Button ---
+    w_draw_color = (100, 100, 150) if W_DRAW_BTN_RECT.collidepoint(mouse_pos) else (80, 80, 120)
+    pygame.draw.rect(screen, w_draw_color, W_DRAW_BTN_RECT)
+    pygame.draw.rect(screen, (200, 200, 200), W_DRAW_BTN_RECT, 2)
+    w_draw_txt = font_small.render("1/2", True, (255, 255, 255))
+    screen.blit(w_draw_txt, w_draw_txt.get_rect(center=W_DRAW_BTN_RECT.center))
+
 
     # 4. The Undo Button
     btn_color = (120, 120, 150) if UNDO_BTN_RECT.collidepoint(mouse_pos) else (80, 80, 100)
@@ -1236,6 +1315,14 @@ def draw_side_menu(screen, show_notation: bool):
         save_btn_color = (100, 150, 200)  # Lighter blue on hover
     else:
         save_btn_color = (80, 120, 160)  # Darker blue
+
+    # --- The Pause/Resume Button ---
+    pause_color = (200, 150, 80) if PAUSE_BTN_RECT.collidepoint(mouse_pos) else (180, 120, 60)
+    pygame.draw.rect(screen, pause_color, PAUSE_BTN_RECT)
+    pygame.draw.rect(screen, (255, 255, 255), PAUSE_BTN_RECT, 2)
+    pause_text_str = "RESUME" if is_paused else "PAUSE"
+    pause_txt = font_small.render(pause_text_str, True, (255, 255, 255))
+    screen.blit(pause_txt, pause_txt.get_rect(center=PAUSE_BTN_RECT.center))
 
     pygame.draw.rect(screen, save_btn_color, SAVE_BTN_RECT)
     pygame.draw.rect(screen, (200, 200, 200), SAVE_BTN_RECT, 2)
@@ -1392,7 +1479,7 @@ def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition,
             adj_end_y - arrow_length * math.sin(angle + math.pi / 6)
         )
         pygame.draw.polygon(screen, color, [tip, left, right])
-def draw_game_over_screen(screen, winner_color: ChessColor):
+def draw_game_over_screen(screen, winner_color: ChessColor,is_draw = False):
     # 1. Dim the background so the board looks "finished"
     dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
     dim_surface.set_alpha(180)  # 0 is clear, 255 is solid black
@@ -1413,7 +1500,11 @@ def draw_game_over_screen(screen, winner_color: ChessColor):
     font_large = pygame.font.SysFont("Arial", 40, bold=True)
     font_small = pygame.font.SysFont("Arial", 28, bold=True)
 
-    text = f"{winner_color.value} WINS!"
+    if is_draw:
+        text = "DRAW!"
+    else:
+        text = f"{winner_color.value} WINS!"
+
     text_surface = font_large.render(text, True, (255, 255, 255))
     text_rect = text_surface.get_rect(center=(WINDOW_SIZE // 2, start_y + 45))
     screen.blit(text_surface, text_rect)
@@ -1500,6 +1591,28 @@ def draw_promotion_menu(screen, color: ChessColor, cache):
 
 # <editor-fold desc="MAIN">
 
+def run_home_screen():
+    global SCREEN
+    """The Waiting Room. You stay here until you click Start or Quit."""
+    pygame_clock = pygame.time.Clock()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return "QUIT"
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if START_BTN_RECT.collidepoint(event.pos):
+                    return "START"  # Break the loop and return to main!
+                elif QUIT_BTN_RECT.collidepoint(event.pos):
+                    return "QUIT"
+                elif SETTINGS_BTN_RECT.collidepoint(event.pos):
+                    print("TODO: Settings Menu")
+
+        draw_home_page(SCREEN)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
 def main():
     global SCREEN, BOARD, IMAGE_CACHE, PLAYERS,NOTATION_FONT
 
@@ -1509,6 +1622,11 @@ def main():
 
     SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED|pygame.RESIZABLE)
     pygame.display.set_caption("Chess")
+
+    home_screen_action = run_home_screen()
+    if home_screen_action == "QUIT":
+        pygame.quit()
+        sys.exit()
 
     # clocks
 
@@ -1537,7 +1655,7 @@ def main():
 
     CLOCKS[BOARD.active_color].start()
 
-
+    is_paused = False
     running = True
     while running:
         for event in pygame.event.get():
@@ -1573,30 +1691,6 @@ def main():
                 # --- LEFT CLICK (Normal Play) ---
                 if event.button == 1:
 
-                    # 0. IS THE GAME OVER? THE GLASS CASE BOUNCER
-                    if game_over_btn_rect is not None:
-                        if game_over_btn_rect.collidepoint(event.pos):
-                            # --- CURE THE PLAYERS FIRST ---
-                            PLAYERS[ChessColor.WHITE].lost = False
-                            PLAYERS[ChessColor.BLACK].lost = False
-                            PLAYERS[ChessColor.WHITE].is_in_checkmate = False
-                            PLAYERS[ChessColor.BLACK].is_in_checkmate = False
-
-
-                            BOARD.load_fen(STARTING_POSITION)
-                            drawn_arrows.clear()
-                            highlighted_squares.clear()
-                            picking_piece = None
-                            is_dragging = False
-
-                            for clock in CLOCKS.values():
-                                clock.reset()
-                            CLOCKS[BOARD.active_color].start()
-                            CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
-
-                        continue  # DO NOT LET THEM CLICK THE BOARD
-
-
                     # 1. UI BUTTON INTERCEPTS (Menu area)
                     if UNDO_BTN_RECT.collidepoint(event.pos):
                         BOARD.undo_move()
@@ -1625,7 +1719,63 @@ def main():
                         PLAYERS[ChessColor.BLACK].lost = True
                         continue
 
+                    if PAUSE_BTN_RECT.collidepoint(event.pos):
+                        is_paused = not is_paused
+                        if is_paused:
+                            CLOCKS[BOARD.active_color].stop()
+                        else:
+                            CLOCKS[BOARD.active_color].start()
+                        continue
 
+                    if B_DRAW_BTN_RECT.collidepoint(event.pos):
+                        if BOARD.draw_offered_by == ChessColor.WHITE:
+                            BOARD.is_draw = True  # White already offered. Black accepts!
+                        else:
+                            BOARD.draw_offered_by = ChessColor.BLACK  # Black offers
+                            print("black offered")
+                        continue
+
+                    if W_DRAW_BTN_RECT.collidepoint(event.pos):
+                        if BOARD.draw_offered_by == ChessColor.BLACK:
+                            BOARD.is_draw = True  # Black already offered. White accepts!
+                        else:
+                            BOARD.draw_offered_by = ChessColor.WHITE  # White offers
+                        continue
+
+                    # If the click made it here, they are interacting with the board.
+                    drawn_arrows.clear()
+                    highlighted_squares.clear()
+
+                    # THE PAUSE BOUNCER
+                    # If the game is paused, trash the click right here.
+                    if is_paused:
+                        continue
+
+                    # 2. IS THE GAME OVER? THE GLASS CASE BOUNCER
+                    if game_over_btn_rect is not None:
+                        if game_over_btn_rect.collidepoint(event.pos):
+                            # --- CURE THE PLAYERS FIRST ---
+                            PLAYERS[ChessColor.WHITE].lost = False
+                            PLAYERS[ChessColor.BLACK].lost = False
+                            # --- THE FIX: BREAK THE HANDSHAKE ---
+                            BOARD.is_draw = False
+                            BOARD.draw_offered_by = None
+                            BOARD.load_fen(STARTING_POSITION)
+                            drawn_arrows.clear()
+                            highlighted_squares.clear()
+                            picking_piece = None
+                            is_dragging = False
+
+                            for clock in CLOCKS.values():
+                                clock.reset()
+                            CLOCKS[BOARD.active_color].start()
+                            CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
+
+                            continue  # DO NOT LET THEM CLICK THE BOARD
+
+
+
+                    #3 - PROMOTION - DID IT PROMOTE??
                     if promotion_pending is not None:
                         for rect, piece_type in promotion_rects:
                             if rect.collidepoint(event.pos):
@@ -1637,9 +1787,6 @@ def main():
                                 break
                         continue
 
-                    # If the click made it here, they are interacting with the board.
-                    drawn_arrows.clear()
-                    highlighted_squares.clear()
 
                     clicked = pixel_to_squarepos(event.pos)
                     if clicked is None: continue
@@ -1714,15 +1861,16 @@ def main():
 
                         right_click_start = None
 
-        CLOCKS[BOARD.active_color].tick()
-        if not CLOCKS[BOARD.active_color]:
-            PLAYERS[BOARD.active_color].lost = True
+        if not is_paused:
+            CLOCKS[BOARD.active_color].tick()
+            if not CLOCKS[BOARD.active_color]:
+                PLAYERS[BOARD.active_color].lost = True
 
         # --- DRAWING PHASE ---
         SCREEN.fill((0, 0, 0))
         draw_board(SCREEN,show_notation)
 
-        draw_side_menu(SCREEN, show_notation)
+        draw_side_menu(SCREEN, show_notation,is_paused)
 
         # Draw all pieces EXCEPT the one being dragged
         dragged_piece = picking_piece if is_dragging else None
@@ -1763,8 +1911,8 @@ def main():
         elif PLAYERS[ChessColor.BLACK].lost:
             winner = ChessColor.WHITE
 
-        if winner is not None:
-            game_over_btn_rect = draw_game_over_screen(SCREEN, winner)
+        if winner is not None or BOARD.is_draw:
+            game_over_btn_rect = draw_game_over_screen(SCREEN, winner,BOARD.is_draw)
             for clock in CLOCKS.values():
                 clock.stop()
         else:
@@ -1775,6 +1923,8 @@ def main():
 
     pygame.quit()
     sys.exit()
+
+
 if __name__ == "__main__":
     main()
 # </editor-fold>
