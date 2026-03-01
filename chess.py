@@ -1,16 +1,14 @@
 import pygame
 import sys
 import math
+import os
 from enum import Enum
-
 
 
 #<editor-fold desc="FILES">
 GAME_INDEX_FILE = "saved_games/curr_num_of_game.txt"
 DIRECTORY_OF_SAVED_GAMES = "saved_games"
 #</editor-fold>
-
-
 
 # <editor-fold desc="CONFIG">
 BOARD_SIZE = 8
@@ -20,44 +18,6 @@ WINDOW_SIZE = BOARD_SIZE * SQUARE_SIZE
 MENU_WIDTH = 200
 SCREEN_WIDTH = WINDOW_SIZE + MENU_WIDTH
 SCREEN_HEIGHT = WINDOW_SIZE
-
-#<editor-fold desc="MAIN MENU CONFIG">
-
-# --- HOME PAGE RECTS ---
-# Centered mathematically based on SCREEN_WIDTH and SCREEN_HEIGHT
-START_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 125, (SCREEN_HEIGHT // 2) - 40, 250, 80)
-QUIT_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 125, (SCREEN_HEIGHT // 2) + 60, 250, 80)
-SETTINGS_BTN_RECT = pygame.Rect(SCREEN_WIDTH - 60, 20, 40, 40)
-
-#</editor-fold>
-
-
-# 1. The Pause Button is the new engine at the top
-PAUSE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, (SCREEN_HEIGHT // 2) - 120, 150, 50)
-
-# 2. Undo hitches to Pause
-UNDO_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, PAUSE_BTN_RECT.bottom + 20, 150, 50)
-
-# 3. Notation hitches to Undo
-NOTATION_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, UNDO_BTN_RECT.bottom + 20, 150, 40)
-
-# 4. Save hitches to Notation
-SAVE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, NOTATION_BTN_RECT.bottom + 20, 150, 40)
-
-# Clocks are now 110px wide. These 40x40 buttons sit perfectly to the right of them.
-B_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 30, 40, 40)
-W_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 70, 40, 40)
-
-# Anchored directly to the clocks/flags
-B_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 80, 40, 40)
-W_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 120, 40, 40)
-
-# --- CLOCK RECTS ---
-B_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, 20, 110, 60)
-W_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, SCREEN_HEIGHT - 80, 110, 60)
-
-
-
 FPS = 60
 
 #delta time - second divided by FPS
@@ -77,15 +37,92 @@ RIGHT_CLICK_HIGHLIGHT_SQUARE_COLOR = (210, 43, 43)
 
 
 
-# </editor-fold>
+#<editor-fold desc="SETTINGS MENU CONFIG">
+# To add a new button, literally just type its name in this list!
+SETTINGS_OPTIONS = [
+    ("General Settings", (100, 100, 100), (130, 130, 130)), # Grey
+    ("Saved Games", (40, 160, 160), (60, 200, 200)),   # Aqua
+    ("Audio Settings", (180, 60, 60), (220, 80, 80)),  # Red
+    ("Video Settings", (60, 160, 60), (80, 200, 80))]   #Green
+SETTINGS_RECTS = []
 
-# <editor-fold desc="GAME STATE">
-class GameState(Enum):
-    MENU = "MENU"
-    PLAYING = "PLAYING"
+# Automatically generate a perfectly stacked hitbox for every word in the list
+for i in range(len(SETTINGS_OPTIONS)):
+    # Start at Y=220, and space them out by 80 pixels each
+    y_position = 220 + (i * 80)
+    rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, y_position, 300, 60)
+    SETTINGS_RECTS.append(rect)
+
+# The Return Button stays anchored to the bottom of the screen
+RETURN_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
+
+#<editor-fold desc="GENERAL SETTINGS">
+
+#<editor-fold desc="GENERAL SETTINGS UI">
+GENERAL_SETTINGS_OPTIONS = ["Auto Save"]
+GENERAL_SETTINGS_RECTS = []
+
+for i in range(len(GENERAL_SETTINGS_OPTIONS)):
+    y_position = 250 + (i * 80)
+    rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, y_position, 300, 60)
+    GENERAL_SETTINGS_RECTS.append(rect)
+#</editor-fold>
+
+#<editor-fold desc="SETTINGS VARIABLES">
+AUTO_SAVE = True
+
+#</editor-fold>
+#</editor-fold>
+
+#</editor-fold>
+
+#<editor-fold desc="MAIN MENU CONFIG">
+
+# --- HOME PAGE RECTS ---
+# Centered mathematically based on SCREEN_WIDTH and SCREEN_HEIGHT
+START_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 125, (SCREEN_HEIGHT // 2) - 40, 250, 80)
+QUIT_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 125, (SCREEN_HEIGHT // 2) + 60, 250, 80)
+SETTINGS_BTN_RECT = pygame.Rect(SCREEN_WIDTH - 60, 20, 40, 40)
+
+
+
+#</editor-fold>
+
+#<editor-fold desc="REPLAY GAME UI">
+# --- REPLAY SCREEN HITBOXES ---
+REPLAY_NEXT_BTN = pygame.Rect(WINDOW_SIZE + 25, 100, 150, 60)
+REPLAY_PREV_BTN = pygame.Rect(WINDOW_SIZE + 25, 180, 150, 60)
+REPLAY_RESET_BTN = pygame.Rect(WINDOW_SIZE + 25, 260, 150, 40)
+REPLAY_NOTATION_BTN = pygame.Rect(WINDOW_SIZE + 25, 320, 150, 40)
+REPLAY_MENU_BTN = pygame.Rect(WINDOW_SIZE + 25, SCREEN_HEIGHT - 100, 150, 60)
+
+#</editor-fold>
+
+#<editor-fold desc="MAIN GAME UI">
+# --- PRE-CALCULATED UI HITBOXES ---
+# 6 buttons, 40px height, 10px gaps. Start Y is exactly centered.
+PAUSE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, 175, 150, 40)
+UNDO_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, PAUSE_BTN_RECT.bottom + 10, 150, 40)
+RESET_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, UNDO_BTN_RECT.bottom + 10, 150, 40)
+MENU_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, RESET_BTN_RECT.bottom + 10, 150, 40)
+NOTATION_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, MENU_BTN_RECT.bottom + 10, 150, 40)
+SAVE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, NOTATION_BTN_RECT.bottom + 10, 150, 40)
+
+# Clocks are now 110px wide. These 40x40 buttons sit perfectly to the right of them.
+B_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 30, 40, 40)
+W_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 70, 40, 40)
+
+# Anchored directly to the clocks/flags
+B_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 80, 40, 40)
+W_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 120, 40, 40)
+
+# --- CLOCK RECTS ---
+B_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, 20, 110, 60)
+W_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, SCREEN_HEIGHT - 80, 110, 60)
 #</editor-fold>
 
 
+#</editor-fold>
 
 # <editor-fold desc="HELPERS (notation / coordinates)">
 def notation_to_row_col(pos: str):
@@ -132,6 +169,36 @@ def create_new_chess_file(board):
     pgn = generate_pgn(board.move_log)
     create_file(f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt", pgn)
     change_file(GAME_INDEX_FILE, str(number_of_game + 1))
+
+
+def pgn_to_move_list(pgn_string: str) -> list[str]:
+    """Strips the numbers (1. 2.) and returns a pure list of SAN strings."""
+    tokens = pgn_string.split()
+    moves = []
+    for token in tokens:
+        # If it doesn't have a dot in it, it's a move, not a turn number!
+        if "." not in token:
+            moves.append(token)
+    return moves
+
+
+def get_move_from_san(board, san_string: str):
+    """The Reverse SAN Trick: Finds the move object that produces this exact string."""
+    # Strip the Red Pen marks (+ and #) because the move generator doesn't use them
+    clean_san = san_string.replace("+", "").replace("#", "")
+
+    # Check every legal move for the current player
+    for piece in board.get_all_pieces():
+        if piece.color == board.active_color:
+            for target_pos, move in piece.legal_moves.items():
+                victim = board.get_piece_at(move.victim_pos) if move.victim_pos else None
+                # Generate the SAN for this hypothetical move
+                test_san = board.get_algebraic_notation(move, piece, victim)
+
+                # If it matches our diary, this is the one!
+                if test_san == clean_san:
+                    return move
+    return None
 #</editor-fold>
 
 #<editor-fold desc="FILE HANDLING">
@@ -158,7 +225,31 @@ def get_file_content(file_path: str) -> str:
     except FileNotFoundError:
         print(f"ERROR: The file at {file_path} was not found.")
         return ""
-#</>
+
+
+def get_saved_games_data():
+    """Reads the saved_games folder and returns all games sorted by number."""
+    games = []
+    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
+        return games
+
+    for filename in os.listdir(DIRECTORY_OF_SAVED_GAMES):
+        if filename.endswith(".txt") and filename.startswith("game_"):
+            filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, filename)
+            pgn = get_file_content(filepath).strip()
+
+            # Find the last move (the last word in the file)
+            tokens = pgn.split()
+            last_move = "None"
+            if tokens:
+                last_move = tokens[-1]
+
+            games.append({"filename": filename, "pgn": pgn, "last_move": last_move})
+
+    # Sort them by game number
+    games.sort(key=lambda x: int(x["filename"].split("_")[1].split(".")[0]) if "_" in x["filename"] else 0)
+    return games
+
 # </editor-fold>
 
 # <editor-fold desc="POSITION CLASS">
@@ -282,7 +373,7 @@ class ChessClock:
         return self.remaining != 0
     def __str__(self) -> str:
         return str(self.remaining)
-#</>
+#</editor-fold>
 
 # <editor-fold desc="PIECE_HELPER">
 def squares_between(a: SquarePosition, b: SquarePosition) -> set[SquarePosition]:
@@ -1158,6 +1249,9 @@ class Board:
 # </editor-fold>
 
 # <editor-fold desc="DRAWING">
+def get_image_path(color: ChessColor, piece_type: ChessPieceType):
+    return f"assets/sliced_pieces/{color.value}_{piece_type.name}.png"
+
 def draw_home_page(screen):
     # 1. Background - Deep Slate with a faint, massive checkerboard pattern
     screen.fill((30, 30, 35))
@@ -1203,8 +1297,209 @@ def draw_home_page(screen):
         in_y = cy + 12 * math.sin(angle)
         pygame.draw.line(screen, set_color, (in_x, in_y), (out_x, out_y), 4) # Teeth
 
-def get_image_path(color: ChessColor, piece_type: ChessPieceType):
-    return f"assets/sliced_pieces/{color.value}_{piece_type.name}.png"
+
+def draw_settings_page(screen):
+    # 1. Same cool background as the Home Page
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 80, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+
+    # 2. Title
+    shadow_surf = font_title.render("SETTINGS", True, (0, 0, 0))
+    screen.blit(shadow_surf, shadow_surf.get_rect(center=(SCREEN_WIDTH // 2 + 5, 125)))
+    title_surf = font_title.render("SETTINGS", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+
+    # 3. Dynamic Buttons Loop
+    # 3. Dynamic Buttons Loop
+    for i, settings_rect in enumerate(SETTINGS_RECTS):
+        # Open the package! Grab the 3 things inside.
+        btn_text, normal_color, hover_color = SETTINGS_OPTIONS[i]
+
+        # Use the colors from the package!
+        color = hover_color if settings_rect.collidepoint(mouse_pos) else normal_color
+
+        pygame.draw.rect(screen, color, settings_rect, border_radius=15)
+        pygame.draw.rect(screen, (255, 255, 255), settings_rect, 3, border_radius=15)
+
+        # Use the text from the package!
+        txt = font_btn.render(btn_text, True, (255, 255, 255))
+        screen.blit(txt, txt.get_rect(center=settings_rect.center))
+
+    # 4. Return to Menu Button
+    ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN TO MENU", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
+
+def draw_general_settings_page(screen):
+    # 1. Background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+
+    # 2. Title
+    title_surf = font_title.render("GENERAL SETTINGS", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+
+    # 3. Dynamic Loop
+    for i, rect in enumerate(GENERAL_SETTINGS_RECTS):
+        btn_name = GENERAL_SETTINGS_OPTIONS[i]
+
+        if btn_name == "Auto Save":
+            if AUTO_SAVE:
+                # Light Grey when ON
+                color = (180, 180, 180) if rect.collidepoint(mouse_pos) else (150, 150, 150)
+                txt_str = "Auto Save: ON"
+            else:
+                # Dark Fading Grey when OFF
+                color = (80, 80, 80) if rect.collidepoint(mouse_pos) else (60, 60, 60)
+                txt_str = "Auto Save: OFF"
+
+        pygame.draw.rect(screen, color, rect, border_radius=15)
+        pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
+
+        txt = font_btn.render(txt_str, True, (255, 255, 255))
+        screen.blit(txt, txt.get_rect(center=rect.center))
+
+    # 4. Return Button
+    ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
+
+def draw_saved_games_page(screen, games, scroll_y, return_rect):
+    # 1. Background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_text = pygame.font.SysFont("Arial", 22, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 16, bold=True)
+
+    # 2. Title (Drawn BEFORE the scissors so it is always visible)
+    title_surf = font_title.render("SAVED GAMES", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+
+    # 3. SET THE SCISSORS (The Window Pane)
+    clip_rect = pygame.Rect(0, 130, SCREEN_WIDTH, SCREEN_HEIGHT - 250)
+    screen.set_clip(clip_rect)
+
+    # 4. Draw the Game Slots dynamically inside the elevator
+    start_y = 150
+    for i, game in enumerate(games):
+        # Subtract scroll_y to move them up!
+        y = start_y + (i * 90) - scroll_y
+
+        main_rect = pygame.Rect(50, y, SCREEN_WIDTH - 100, 75)
+        show_rect = pygame.Rect(main_rect.right - 260, y + 17, 70, 40)
+        copy_rect = pygame.Rect(main_rect.right - 170, y + 17, 70, 40)
+        delete_rect = pygame.Rect(main_rect.right - 80, y + 17, 70, 40)
+
+        # Draw Card
+        pygame.draw.rect(screen, (50, 50, 60), main_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 100, 120), main_rect, 2, border_radius=10)
+
+        # Draw Text
+        game_title = f"{game['filename']}  |  Last Move: {game['last_move']}"
+        txt_surf = font_text.render(game_title, True, (220, 220, 220))
+        screen.blit(txt_surf, (main_rect.x + 20, main_rect.y + 25))
+
+        # Show Button
+        show_color = (80, 200, 80) if show_rect.collidepoint(mouse_pos) else (60, 150, 60)
+        pygame.draw.rect(screen, show_color, show_rect, border_radius=5)
+        show_txt = font_btn.render("SHOW", True, (255, 255, 255))
+        screen.blit(show_txt, show_txt.get_rect(center=show_rect.center))
+
+        # Copy Button
+        copy_color = (80, 150, 200) if copy_rect.collidepoint(mouse_pos) else (60, 100, 150)
+        pygame.draw.rect(screen, copy_color, copy_rect, border_radius=5)
+        copy_txt = font_btn.render("COPY", True, (255, 255, 255))
+        screen.blit(copy_txt, copy_txt.get_rect(center=copy_rect.center))
+
+        # Delete Button
+        del_color = (200, 80, 80) if delete_rect.collidepoint(mouse_pos) else (150, 60, 60)
+        pygame.draw.rect(screen, del_color, delete_rect, border_radius=5)
+        del_txt = font_btn.render("DEL", True, (255, 255, 255))
+        screen.blit(del_txt, del_txt.get_rect(center=delete_rect.center))
+
+    # 5. REMOVE THE SCISSORS
+    screen.set_clip(None)
+
+    # 6. Return Button (Drawn AFTER the scissors so it sits at the bottom safely)
+    ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
+    ret_txt = font_text.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
+
+
+def draw_replay_side_menu(screen, show_notation: bool, current_move_text: str):
+    pygame.draw.rect(screen, (30, 30, 30), (WINDOW_SIZE, 0, MENU_WIDTH, SCREEN_HEIGHT))
+    pygame.draw.line(screen, (100, 100, 100), (WINDOW_SIZE, 0), (WINDOW_SIZE, SCREEN_HEIGHT), 2)
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_btn = pygame.font.SysFont("Arial", 20, bold=True)
+    font_large = pygame.font.SysFont("Arial", 28, bold=True)
+
+    # Move Tracker Label
+    lbl = font_large.render("Current Move:", True, (200, 200, 200))
+    screen.blit(lbl, lbl.get_rect(center=(WINDOW_SIZE + 100, 30)))
+
+    txt = font_large.render(current_move_text, True, (255, 200, 50))
+    screen.blit(txt, txt.get_rect(center=(WINDOW_SIZE + 100, 65)))
+
+    # Next Button (Green)
+    n_col = (80, 200, 80) if REPLAY_NEXT_BTN.collidepoint(mouse_pos) else (60, 150, 60)
+    pygame.draw.rect(screen, n_col, REPLAY_NEXT_BTN, border_radius=10)
+    n_txt = font_btn.render("NEXT MOVE", True, (255, 255, 255))
+    screen.blit(n_txt, n_txt.get_rect(center=REPLAY_NEXT_BTN.center))
+
+    # Prev Button (Yellow)
+    p_col = (200, 200, 80) if REPLAY_PREV_BTN.collidepoint(mouse_pos) else (150, 150, 60)
+    pygame.draw.rect(screen, p_col, REPLAY_PREV_BTN, border_radius=10)
+    p_txt = font_btn.render("PREV MOVE", True, (0, 0, 0))
+    screen.blit(p_txt, p_txt.get_rect(center=REPLAY_PREV_BTN.center))
+
+    # Reset Button (Red)
+    r_col = (200, 80, 80) if REPLAY_RESET_BTN.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, r_col, REPLAY_RESET_BTN, border_radius=5)
+    r_txt = font_btn.render("Restart Match", True, (255, 255, 255))
+    screen.blit(r_txt, r_txt.get_rect(center=REPLAY_RESET_BTN.center))
+
+    # Notation Toggle
+    not_col = (100, 180, 100) if show_notation else (150, 100, 100)
+    pygame.draw.rect(screen, not_col, REPLAY_NOTATION_BTN, border_radius=5)
+    t_txt = font_btn.render("Notation: ON" if show_notation else "Notation: OFF", True, (255, 255, 255))
+    screen.blit(t_txt, t_txt.get_rect(center=REPLAY_NOTATION_BTN.center))
+
+    # Menu Button (Blue)
+    m_col = (80, 150, 200) if REPLAY_MENU_BTN.collidepoint(mouse_pos) else (60, 100, 150)
+    pygame.draw.rect(screen, m_col, REPLAY_MENU_BTN, border_radius=10)
+    m_txt = font_btn.render("Return to Menu", True, (255, 255, 255))
+    screen.blit(m_txt, m_txt.get_rect(center=REPLAY_MENU_BTN.center))
 
 
 def draw_board(screen, show_notation: bool = False):
@@ -1324,10 +1619,25 @@ def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     pause_txt = font_small.render(pause_text_str, True, (255, 255, 255))
     screen.blit(pause_txt, pause_txt.get_rect(center=PAUSE_BTN_RECT.center))
 
+    #the save game
     pygame.draw.rect(screen, save_btn_color, SAVE_BTN_RECT)
     pygame.draw.rect(screen, (200, 200, 200), SAVE_BTN_RECT, 2)
     save_txt = font_small.render("Save Game", True, (255, 255, 255))
     screen.blit(save_txt, save_txt.get_rect(center=SAVE_BTN_RECT.center))
+
+    # --- Reset Button ---
+    reset_color = (180, 100, 100) if RESET_BTN_RECT.collidepoint(mouse_pos) else (150, 80, 80)
+    pygame.draw.rect(screen, reset_color, RESET_BTN_RECT)
+    pygame.draw.rect(screen, (255, 255, 255), RESET_BTN_RECT, 2)
+    reset_txt = font_small.render("Reset Game", True, (255, 255, 255))
+    screen.blit(reset_txt, reset_txt.get_rect(center=RESET_BTN_RECT.center))
+
+    # --- Menu Button ---
+    menu_color = (100, 150, 150) if MENU_BTN_RECT.collidepoint(mouse_pos) else (80, 120, 120)
+    pygame.draw.rect(screen, menu_color, MENU_BTN_RECT)
+    pygame.draw.rect(screen, (255, 255, 255), MENU_BTN_RECT, 2)
+    menu_txt = font_small.render("Main Menu", True, (255, 255, 255))
+    screen.blit(menu_txt, menu_txt.get_rect(center=MENU_BTN_RECT.center))
 
 def get_piece_image(piece: ChessPiece, cache):
     return get_piece_image_with_color_and_type(piece.color, piece.type, cache)
@@ -1588,8 +1898,252 @@ def draw_promotion_menu(screen, color: ChessColor, cache):
 
 # </editor-fold>
 
+# <editor-fold desc="MAIN MENU">
 
-# <editor-fold desc="MAIN">
+def run_general_settings_screen():
+    global SCREEN, AUTO_SAVE
+    pygame_clock = pygame.time.Clock()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # 1. Return Button
+                if RETURN_BTN_RECT.collidepoint(event.pos):
+                    return
+
+                # 2. Dynamic Settings Buttons
+                for i, rect in enumerate(GENERAL_SETTINGS_RECTS):
+                    if rect.collidepoint(event.pos):
+                        btn_name = GENERAL_SETTINGS_OPTIONS[i]
+
+                        if btn_name == "Auto Save":
+                            AUTO_SAVE = not AUTO_SAVE  # Flip the switch!
+
+        draw_general_settings_page(SCREEN)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
+def run_replay_screen(pgn_string: str):
+    global SCREEN, IMAGE_CACHE, BOARD
+    pygame_clock = pygame.time.Clock()
+
+    # 1. Use the global BOARD instead of creating a fake one!
+    BOARD.load_fen(STARTING_POSITION)
+
+    # 2. Parse the Diary
+    san_list = pgn_to_move_list(pgn_string)
+    current_move_index = 0
+
+    show_notation = False
+    drawn_arrows = set()
+    highlighted_squares = set()
+    right_click_start = None
+
+    while True:
+        # Determine what text to show for the current move
+        if current_move_index == 0:
+            move_text = "Start"
+        else:
+            move_text = san_list[current_move_index - 1]
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            # --- KEYBOARD SHORTCUTS ---
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RIGHT and current_move_index < len(san_list):
+                    drawn_arrows.clear()
+                    target_san = san_list[current_move_index]
+                    move = get_move_from_san(BOARD, target_san)
+                    if move:
+                        BOARD.execute_move(move)
+                        current_move_index += 1
+                elif event.key == pygame.K_LEFT and current_move_index > 0:
+                    drawn_arrows.clear()
+                    BOARD.undo_move()
+                    current_move_index -= 1
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left Click
+                    # 1. Wipe whiteboard on any left click
+                    drawn_arrows.clear()
+                    highlighted_squares.clear()
+
+                    # 2. Button Intercepts
+                    if REPLAY_MENU_BTN.collidepoint(event.pos):
+                        return  # Exit the room!
+
+                    elif REPLAY_NOTATION_BTN.collidepoint(event.pos):
+                        show_notation = not show_notation
+
+                    elif REPLAY_RESET_BTN.collidepoint(event.pos):
+                        BOARD.load_fen(STARTING_POSITION)
+                        current_move_index = 0
+
+                    elif REPLAY_NEXT_BTN.collidepoint(event.pos) and current_move_index < len(san_list):
+                        target_san = san_list[current_move_index]
+                        move = get_move_from_san(BOARD, target_san)
+                        if move:
+                            BOARD.execute_move(move)
+                            current_move_index += 1
+
+                    elif REPLAY_PREV_BTN.collidepoint(event.pos) and current_move_index > 0:
+                        BOARD.undo_move()
+                        current_move_index -= 1
+
+                elif event.button == 3:  # Right Click
+                    right_click_start = pixel_to_squarepos(event.pos)
+
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 3:
+                    if right_click_start is not None:
+                        right_click_end = pixel_to_squarepos(event.pos)
+                        if right_click_end is not None:
+                            if right_click_start != right_click_end:
+                                arrow_tuple = (right_click_start, right_click_end)
+                                if arrow_tuple in drawn_arrows:
+                                    drawn_arrows.remove(arrow_tuple)
+                                else:
+                                    drawn_arrows.add(arrow_tuple)
+                            else:
+                                if right_click_start in highlighted_squares:
+                                    highlighted_squares.remove(right_click_start)
+                                else:
+                                    highlighted_squares.add(right_click_start)
+                        right_click_start = None
+
+        # --- DRAWING PHASE ---
+        SCREEN.fill((0, 0, 0))
+        draw_board(SCREEN, show_notation)
+        draw_replay_side_menu(SCREEN, show_notation, move_text)
+
+        # Draw pieces using the global BOARD
+        draw_pieces(SCREEN, BOARD, IMAGE_CACHE)
+
+        for square in highlighted_squares:
+            highlight_square(SCREEN, square, (200, 50, 50), alpha=100, thickness=0)
+
+        for start_pos, end_pos in drawn_arrows:
+            draw_arrow(SCREEN, start_pos, end_pos, (255, 170, 0))
+
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
+
+def run_saved_games_screen():
+    global SCREEN
+    pygame_clock = pygame.time.Clock()
+
+    games = get_saved_games_data()
+
+    # Elevator controls
+    scroll_y = 0
+    scroll_speed = 30
+    start_y = 150
+    card_height = 90
+
+    # Calculate the floor: How far down can we scroll?
+    total_content_height = len(games) * card_height
+    window_pane_height = SCREEN_HEIGHT - 250
+    max_scroll = max(0, total_content_height - window_pane_height + 20)
+
+    return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 80, 300, 60)
+    clip_rect = pygame.Rect(0, 130, SCREEN_WIDTH, SCREEN_HEIGHT - 250)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            # --- THE SCROLL WHEEL ---
+            if event.type == pygame.MOUSEWHEEL:
+                scroll_y -= event.y * scroll_speed
+                # Clamp the elevator so it doesn't break the roof or floor
+                scroll_y = max(0, min(scroll_y, max_scroll))
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # 1. Return Button
+                if return_rect.collidepoint(event.pos):
+                    return
+
+                # 2. Check game buttons IF click is inside the window pane
+                if clip_rect.collidepoint(event.pos):
+                    for i, game in enumerate(games):
+                        # Calculate exact hitbox based on current scroll
+                        y = start_y + (i * card_height) - scroll_y
+                        main_rect = pygame.Rect(50, y, SCREEN_WIDTH - 100, 75)
+
+                        show_rect = pygame.Rect(main_rect.right - 260, y + 17, 70, 40)
+                        copy_rect = pygame.Rect(main_rect.right - 170, y + 17, 70, 40)
+                        delete_rect = pygame.Rect(main_rect.right - 80, y + 17, 70, 40)
+
+                        if show_rect.collidepoint(event.pos):
+                            run_replay_screen(game['pgn'])
+                        elif copy_rect.collidepoint(event.pos):
+                            pygame.scrap.init()
+                            pygame.scrap.put(pygame.SCRAP_TEXT, game['pgn'].encode('utf-8'))
+                            print(f"Copied {game['filename']} to clipboard!")
+
+                        elif delete_rect.collidepoint(event.pos):
+
+                            # 1. Safely delete the file
+                            filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, game['filename'])
+                            if os.path.exists(filepath):
+                                os.remove(filepath)
+                                print(f"Deleted {game['filename']}")
+
+                            # 2. Tell the Librarian to refresh the list!
+                            games = get_saved_games_data()
+
+                            # 3. Recalculate the floor (in case deleting a game made the list shorter)
+                            total_content_height = len(games) * card_height
+                            max_scroll = max(0, total_content_height - window_pane_height + 20)
+
+                            # 4. Snap the elevator back up if we were at the very bottom
+                            scroll_y = min(scroll_y, max_scroll)
+
+        draw_saved_games_page(SCREEN, games, scroll_y, return_rect)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
+def run_settings_screen():
+    global SCREEN
+    """The Settings Room. You stay here until you click Return to Menu."""
+    pygame_clock = pygame.time.Clock()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+
+                # Check all the dynamic buttons in one simple loop!
+                for i, rect in enumerate(SETTINGS_RECTS):
+                    if rect.collidepoint(event.pos):
+                        btn_name = SETTINGS_OPTIONS[i][0]
+                        if btn_name == "Saved Games":
+                            run_saved_games_screen()
+                        elif btn_name == "General Settings":
+                            run_general_settings_screen()
+                        else:
+                            print(f"TODO: Open menu for {btn_name}")
+
+                # Check the Return button
+                if RETURN_BTN_RECT.collidepoint(event.pos):
+                    return  # Break the loop! This teleports us back to the Home Screen.
+
+        draw_settings_page(SCREEN)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
 
 def run_home_screen():
     global SCREEN
@@ -1607,11 +2161,14 @@ def run_home_screen():
                 elif QUIT_BTN_RECT.collidepoint(event.pos):
                     return "QUIT"
                 elif SETTINGS_BTN_RECT.collidepoint(event.pos):
-                    print("TODO: Settings Menu")
+                    run_settings_screen()
 
         draw_home_page(SCREEN)
         pygame.display.flip()
         pygame_clock.tick(FPS)
+# </editor-fold>
+
+# <editor-fold desc="MAIN">
 
 def main():
     global SCREEN, BOARD, IMAGE_CACHE, PLAYERS,NOTATION_FONT
@@ -1651,7 +2208,41 @@ def main():
     game_over_btn_rect = None
     show_notation = False
     is_fullscreen = False
+    has_auto_saved = False
 
+    # ==========================================
+    # THE CLEANUP CREW
+    # ==========================================
+    def reset_match():
+        nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused,has_auto_saved
+
+        # 1. Cure the players and the board
+        PLAYERS[ChessColor.WHITE].lost = False
+        PLAYERS[ChessColor.BLACK].lost = False
+        BOARD.is_draw = False
+        BOARD.draw_offered_by = None
+        BOARD.is_stalemate = False
+        BOARD.load_fen(STARTING_POSITION)
+
+        # 2. Wipe the whiteboards
+        drawn_arrows.clear()
+        highlighted_squares.clear()
+
+        # 3. Drop any pieces we were holding
+        picking_piece = None
+        is_dragging = False
+        promotion_pending = None
+        game_over_btn_rect = None
+        is_paused = False
+
+        #only relevent if autosave is true
+        has_auto_saved = False
+
+        # 4. Reset the clocks
+        for clock in CLOCKS.values():
+            clock.reset()
+        CLOCKS[BOARD.active_color].start()
+        CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
 
     CLOCKS[BOARD.active_color].start()
 
@@ -1742,6 +2333,24 @@ def main():
                             BOARD.draw_offered_by = ChessColor.WHITE  # White offers
                         continue
 
+                    if RESET_BTN_RECT.collidepoint(event.pos):
+                        reset_match()
+                        continue
+
+                    if MENU_BTN_RECT.collidepoint(event.pos):
+                        # 1. Stop the clocks!
+                        CLOCKS[BOARD.active_color].stop()
+
+                        # 2. Open the Main Menu room
+                        action = run_home_screen()
+
+                        # 3. Did they quit, or hit Start?
+                        if action == "QUIT":
+                            running = False
+                        elif action == "START":
+                            reset_match()  # Clean the board for the new game!
+                        continue
+
                     # If the click made it here, they are interacting with the board.
                     drawn_arrows.clear()
                     highlighted_squares.clear()
@@ -1754,23 +2363,7 @@ def main():
                     # 2. IS THE GAME OVER? THE GLASS CASE BOUNCER
                     if game_over_btn_rect is not None:
                         if game_over_btn_rect.collidepoint(event.pos):
-                            # --- CURE THE PLAYERS FIRST ---
-                            PLAYERS[ChessColor.WHITE].lost = False
-                            PLAYERS[ChessColor.BLACK].lost = False
-                            # --- THE FIX: BREAK THE HANDSHAKE ---
-                            BOARD.is_draw = False
-                            BOARD.draw_offered_by = None
-                            BOARD.load_fen(STARTING_POSITION)
-                            drawn_arrows.clear()
-                            highlighted_squares.clear()
-                            picking_piece = None
-                            is_dragging = False
-
-                            for clock in CLOCKS.values():
-                                clock.reset()
-                            CLOCKS[BOARD.active_color].start()
-                            CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
-
+                            reset_match()
                             continue  # DO NOT LET THEM CLICK THE BOARD
 
 
@@ -1913,6 +2506,11 @@ def main():
 
         if winner is not None or BOARD.is_draw:
             game_over_btn_rect = draw_game_over_screen(SCREEN, winner,BOARD.is_draw)
+            if AUTO_SAVE and not has_auto_saved:
+                create_new_chess_file(BOARD)
+                has_auto_saved = True
+                print("Auto-saved game successfully.")
+
             for clock in CLOCKS.values():
                 clock.stop()
         else:
