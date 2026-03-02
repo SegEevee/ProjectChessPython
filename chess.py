@@ -2,39 +2,51 @@ import pygame
 import sys
 import math
 import os
+import json
+import re
 from enum import Enum
 
 
-#<editor-fold desc="FILES">
-GAME_INDEX_FILE = "saved_games/curr_num_of_game.txt"
+#<editor-fold desc="FILES AND PREFERENCES">
 DIRECTORY_OF_SAVED_GAMES = "saved_games"
+DIRECTORY_OF_GENERAL_SETTINGS = "settings_data"
+PREFERENCES_FILE = os.path.join(DIRECTORY_OF_GENERAL_SETTINGS, "preferences.json")
+
+# The Master Clipboard (Default Values)
+PREFERENCES = {
+    "game_counter": 1,
+    "auto_save": True,
+    "starting_time": 5 * 60
+}
+
 #</editor-fold>
 
 # <editor-fold desc="CONFIG">
+
+#delta time - second divided by FPS
 BOARD_SIZE = 8
 SQUARE_SIZE = 80
 WINDOW_SIZE = BOARD_SIZE * SQUARE_SIZE
 
-MENU_WIDTH = 200
-SCREEN_WIDTH = WINDOW_SIZE + MENU_WIDTH
+# The Balanced Layout
+SIDE_PANEL_WIDTH = 220
+SCREEN_WIDTH = (SIDE_PANEL_WIDTH * 2) + WINDOW_SIZE
 SCREEN_HEIGHT = WINDOW_SIZE
+
+# The crucial shift for all board math
+BOARD_X_OFFSET = SIDE_PANEL_WIDTH
+
 FPS = 60
-
-#delta time - second divided by FPS
 DT = 1/FPS
-STARTING_TIME = 5 * 60 #5 mins
+STARTING_TIME = 5 * 60 # 5 mins
 
-#starting pos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" (I want to change it to test castling)
 STARTING_POSITION = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 LIGHT = (240, 217, 181)
 DARK = (181, 136, 99)
-
 PICKING_PIECE_HIGHLIGHT_COLOR = (0, 255, 255)
 LEGAL_MOVES_HIGHLIGHT_COLOR = (67, 67, 67)
-
 RIGHT_CLICK_HIGHLIGHT_SQUARE_COLOR = (210, 43, 43)
-
 
 
 #<editor-fold desc="SETTINGS MENU CONFIG">
@@ -59,7 +71,7 @@ RETURN_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 30
 #<editor-fold desc="GENERAL SETTINGS">
 
 #<editor-fold desc="GENERAL SETTINGS UI">
-GENERAL_SETTINGS_OPTIONS = ["Auto Save"]
+GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control"]
 GENERAL_SETTINGS_RECTS = []
 
 for i in range(len(GENERAL_SETTINGS_OPTIONS)):
@@ -90,36 +102,41 @@ SETTINGS_BTN_RECT = pygame.Rect(SCREEN_WIDTH - 60, 20, 40, 40)
 
 #<editor-fold desc="REPLAY GAME UI">
 # --- REPLAY SCREEN HITBOXES ---
-REPLAY_NEXT_BTN = pygame.Rect(WINDOW_SIZE + 25, 100, 150, 60)
-REPLAY_PREV_BTN = pygame.Rect(WINDOW_SIZE + 25, 180, 150, 60)
-REPLAY_RESET_BTN = pygame.Rect(WINDOW_SIZE + 25, 260, 150, 40)
-REPLAY_NOTATION_BTN = pygame.Rect(WINDOW_SIZE + 25, 320, 150, 40)
-REPLAY_MENU_BTN = pygame.Rect(WINDOW_SIZE + 25, SCREEN_HEIGHT - 100, 150, 60)
+RIGHT_MENU_X = BOARD_X_OFFSET + WINDOW_SIZE
+
+REPLAY_NEXT_BTN = pygame.Rect(RIGHT_MENU_X + 35, 100, 150, 60)
+REPLAY_PREV_BTN = pygame.Rect(RIGHT_MENU_X + 35, 180, 150, 60)
+REPLAY_RESET_BTN = pygame.Rect(RIGHT_MENU_X + 35, 260, 150, 40)
+REPLAY_NOTATION_BTN = pygame.Rect(RIGHT_MENU_X + 35, 320, 150, 40)
+REPLAY_MENU_BTN = pygame.Rect(RIGHT_MENU_X + 35, SCREEN_HEIGHT - 100, 150, 60)
 
 #</editor-fold>
 
-#<editor-fold desc="MAIN GAME UI">
+# <editor-fold desc="MAIN GAME UI">
+RIGHT_MENU_X = BOARD_X_OFFSET + WINDOW_SIZE
+
 # --- PRE-CALCULATED UI HITBOXES ---
-# 6 buttons, 40px height, 10px gaps. Start Y is exactly centered.
-PAUSE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, 175, 150, 40)
-UNDO_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, PAUSE_BTN_RECT.bottom + 10, 150, 40)
-RESET_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, UNDO_BTN_RECT.bottom + 10, 150, 40)
-MENU_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, RESET_BTN_RECT.bottom + 10, 150, 40)
-NOTATION_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, MENU_BTN_RECT.bottom + 10, 150, 40)
-SAVE_BTN_RECT = pygame.Rect(WINDOW_SIZE + 25, NOTATION_BTN_RECT.bottom + 10, 150, 40)
-
-# Clocks are now 110px wide. These 40x40 buttons sit perfectly to the right of them.
-B_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 30, 40, 40)
-W_FLAG_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 70, 40, 40)
-
-# Anchored directly to the clocks/flags
-B_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, 80, 40, 40)
-W_DRAW_BTN_RECT = pygame.Rect(WINDOW_SIZE + 140, SCREEN_HEIGHT - 120, 40, 40)
+PAUSE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, 175, 150, 40)
+UNDO_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, PAUSE_BTN_RECT.bottom + 10, 150, 40)
+RESET_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, UNDO_BTN_RECT.bottom + 10, 150, 40)
+MENU_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, RESET_BTN_RECT.bottom + 10, 150, 40)
+NOTATION_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, MENU_BTN_RECT.bottom + 10, 150, 40)
+SAVE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, NOTATION_BTN_RECT.bottom + 10, 150, 40)
 
 # --- CLOCK RECTS ---
-B_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, 20, 110, 60)
-W_CLOCK_RECT = pygame.Rect(WINDOW_SIZE + 20, SCREEN_HEIGHT - 80, 110, 60)
-#</editor-fold>
+# --- CLOCK RECTS (Shifted to RIGHT_MENU_X) ---
+# We put the clock slightly to the left in the 220px panel to make room for the flags
+B_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, 20, 110, 60)
+W_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, SCREEN_HEIGHT - 80, 110, 60)
+
+# Clocks are 110px wide. These 40x40 buttons sit perfectly to the right of them!
+B_FLAG_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, 30, 40, 40)
+W_FLAG_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 70, 40, 40)
+
+# Anchored directly underneath the flags
+B_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, 80, 40, 40)
+W_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 120, 40, 40)
+# </editor-fold>
 
 
 #</editor-fold>
@@ -138,7 +155,7 @@ def row_col_to_notation(row: int, col: int):
 
 def pixel_to_squarepos(mouse_pos):
     x, y = mouse_pos
-    col = x // SQUARE_SIZE
+    col = (x - BOARD_X_OFFSET) // SQUARE_SIZE
     row = y // SQUARE_SIZE
     if 0 <= col < 8 and 0 <= row < 8:
         return SquarePosition(row=row, col=col)
@@ -164,24 +181,49 @@ def generate_pgn(diary: list) -> str:
 
     return " ".join(pgn_moves)
 
+
 def create_new_chess_file(board):
-    number_of_game = int(get_file_content(GAME_INDEX_FILE))
+    """Saves the current game using the number from our Preferences clipboard."""
+    # 1. Look at the clipboard for the current number
+    number_of_game = PREFERENCES["game_counter"]
+
+    # 2. Generate the PGN text
     pgn = generate_pgn(board.move_log)
-    create_file(f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt", pgn)
-    change_file(GAME_INDEX_FILE, str(number_of_game + 1))
+
+    # 3. Create the file (e.g., game_1.txt)
+    filename = f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt"
+    create_file(filename, pgn)
+
+    # 4. Update the clipboard: Tick the number up and save the folder to disk!
+    PREFERENCES["game_counter"] += 1
+    save_preferences()
 
 
 def pgn_to_move_list(pgn_string: str) -> list[str]:
-    """Strips the numbers (1. 2.) and returns a pure list of SAN strings."""
-    tokens = pgn_string.split()
+    """Cleans the PGN and strictly filters for things that actually look like moves."""
+    # 1. Scrap the headers, comments, and results
+    text = re.sub(r'\[.*?\]', '', pgn_string, flags=re.DOTALL)
+    text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
+    text = re.sub(r'(1-0|0-1|1/2-1/2|\*)', '', text)
+
+    tokens = text.split()
     moves = []
-    for token in tokens:
-        # If it doesn't have a dot in it, it's a move, not a turn number!
-        if "." not in token:
-            moves.append(token)
+
+    for t in tokens:
+        # Strip move numbers (1. or 24...)
+        clean_token = re.sub(r'^\d+\.*', '', t)
+
+
+        if clean_token and len(clean_token) < 10 and not any(c in clean_token for c in '/+='):
+            # Special case: allow '=' only if it's a promotion (e.g., e8=Q)
+            if '=' in clean_token and not re.match(r'^[a-h][18]=[QRBN]', clean_token):
+                continue
+            moves.append(clean_token)
+        # Exception: Castling
+        elif clean_token in ("O-O", "O-O-O"):
+            moves.append(clean_token)
+    print(moves)
     return moves
-
-
 def get_move_from_san(board, san_string: str):
     """The Reverse SAN Trick: Finds the move object that produces this exact string."""
     # Strip the Red Pen marks (+ and #) because the move generator doesn't use them
@@ -202,6 +244,36 @@ def get_move_from_san(board, san_string: str):
 #</editor-fold>
 
 #<editor-fold desc="FILE HANDLING">
+
+def load_preferences():
+    """Opens the JSON backpack and copies the values to our global PREFERENCES dictionary."""
+    global PREFERENCES
+    # If the file exists, read it!
+    if os.path.exists(PREFERENCES_FILE):
+        try:
+            with open(PREFERENCES_FILE, "r") as file:
+                loaded_data = json.load(file)
+                # Update our clipboard with whatever was in the file
+                print(loaded_data)
+                PREFERENCES.update(loaded_data)
+        except json.JSONDecodeError:
+            print("Preferences file corrupted. Using defaults.")
+            save_preferences()
+    else:
+        # If it doesn't exist yet, make one using our default clipboard!
+        save_preferences()
+
+
+def save_preferences():
+    """Takes our current PREFERENCES dictionary and photocopies it into the JSON file."""
+    # Ensure the saved_games folder actually exists first!
+    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
+        os.makedirs(DIRECTORY_OF_SAVED_GAMES)
+
+    with open(PREFERENCES_FILE, "w") as file:
+        # Dump the dictionary into the file, indented nicely so humans can read it
+        json.dump(PREFERENCES, file, indent=4)
+
 
 def create_file(file_path: str, initial_text: str = ""):
     """Creates a new text file and writes the initial text. Overwrites if it exists."""
@@ -249,6 +321,59 @@ def get_saved_games_data():
     # Sort them by game number
     games.sort(key=lambda x: int(x["filename"].split("_")[1].split(".")[0]) if "_" in x["filename"] else 0)
     return games
+
+
+def is_pgn_valid(pgn_string: str) -> bool:
+    """Uses the global BOARD to test if the text is a real game of chess."""
+    global BOARD
+    if not pgn_string.strip():
+        return False
+
+    # 1. Reset the main board to the start
+    BOARD.load_fen(STARTING_POSITION)
+
+    # 2. Translate the text into raw moves
+    san_list = pgn_to_move_list(pgn_string)
+    if len(san_list) == 0:
+        return False
+
+    # 3. Force the board to play the game
+    for san in san_list:
+        move = get_move_from_san(BOARD, san)
+        if move is None:
+            # The Reverse SAN engine couldn't find a legal move for this string!
+            print(f"Validation failed on move: {san}")
+            BOARD.load_fen(STARTING_POSITION)  # Clean up the mess before failing!
+            return False
+        BOARD.execute_move(move)
+
+    # If we made it through, it's valid! Clean up and return True.
+    BOARD.load_fen(STARTING_POSITION)
+    return True
+
+
+def save_custom_pgn(pgn_string: str):
+    """Saves a pasted PGN using the Preferences clipboard."""
+    number_of_game = PREFERENCES["game_counter"]
+    filepath = f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt"
+
+    # Format the PGN nicely
+    san_list = pgn_to_move_list(pgn_string)
+    formatted_pgn = []
+    for i, san in enumerate(san_list):
+        if i % 2 == 0:
+            turn_number = (i // 2) + 1
+            formatted_pgn.append(f"{turn_number}. {san}")
+        else:
+            formatted_pgn.append(san)
+
+    final_string = " ".join(formatted_pgn)
+
+    # Save the file and update the master counter
+    create_file(filepath, final_string)
+
+    PREFERENCES["game_counter"] += 1
+    save_preferences()
 
 # </editor-fold>
 
@@ -966,34 +1091,25 @@ class Board:
 
         if playing_player.is_controlling_square(enemy_player.king.position):
             enemy_player.is_in_check = True
-            enemy_player.king.update_all_legal_moves(self)
 
-            enemy_player.checking_pieces.clear()
-            king_pos = enemy_player.king.position
-            for piece in playing_player.pieces:
-                if piece.is_controlling_square(king_pos):
-                    enemy_player.checking_pieces.append(piece)
-
-            # Reprocess enemy moves to filter them against the check
+            # 2. Since they are in check, refresh their moves to see if they can escape
             for p in enemy_player.pieces:
                 p.update_all_legal_moves(self)
 
+            # 3. If they have NO moves left while in check, it's Game Over
             if not enemy_player.has_legal_moves():
                 enemy_player.lost = True
             else:
-                enemy_player.is_in_check = False
+                enemy_player.lost = False  # They are in check, but not lost yet
 
         else:
-
-            # They are NOT in check.
+            # 4. THE OFF SWITCH: No enemy piece hits the King's square.
             enemy_player.is_in_check = False
             enemy_player.lost = False
-            enemy_player.king.update_all_legal_moves(self)
-            # Reprocess all their moves to be completely sure
+
+            # Still refresh moves so pieces can move normally
             for p in enemy_player.pieces:
                 p.update_all_legal_moves(self)
-            # --- THE STALEMATE TEST ---
-            # If they have absolutely zero legal moves anywhere on the board...
             if not enemy_player.has_legal_moves():
                 self.is_stalemate = True
                 self.is_draw = True
@@ -1176,7 +1292,9 @@ class Board:
         """Reads the last page of the diary and reverses time."""
         if len(self.move_log) == 0:
             return False
-
+        if self.is_draw:
+            self.is_draw = False
+            self.is_stalemate = False
         # 1. Open the Diary and rip out the last page
         record = self.move_log.pop()
         move = record.move
@@ -1340,6 +1458,7 @@ def draw_settings_page(screen):
     ret_txt = font_btn.render("RETURN TO MENU", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
+
 def draw_general_settings_page(screen):
     # 1. Background
     screen.fill((30, 30, 35))
@@ -1356,20 +1475,25 @@ def draw_general_settings_page(screen):
     # 2. Title
     title_surf = font_title.render("GENERAL SETTINGS", True, (255, 255, 255))
     screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
-
+    txt_str = ""
+    color = None
     # 3. Dynamic Loop
     for i, rect in enumerate(GENERAL_SETTINGS_RECTS):
         btn_name = GENERAL_SETTINGS_OPTIONS[i]
 
         if btn_name == "Auto Save":
-            if AUTO_SAVE:
-                # Light Grey when ON
+            # Look at the dictionary!
+            if PREFERENCES["auto_save"]:
                 color = (180, 180, 180) if rect.collidepoint(mouse_pos) else (150, 150, 150)
                 txt_str = "Auto Save: ON"
             else:
-                # Dark Fading Grey when OFF
                 color = (80, 80, 80) if rect.collidepoint(mouse_pos) else (60, 60, 60)
                 txt_str = "Auto Save: OFF"
+
+        elif btn_name == "Time Control":
+            color = (100, 150, 200) if rect.collidepoint(mouse_pos) else (80, 120, 160)
+            # Use the dictionary value!
+            txt_str = f"Time: {PREFERENCES['starting_time'] // 60} Min"
 
         pygame.draw.rect(screen, color, rect, border_radius=15)
         pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
@@ -1384,7 +1508,7 @@ def draw_general_settings_page(screen):
     ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
-def draw_saved_games_page(screen, games, scroll_y, return_rect):
+def draw_saved_games_page(screen, games, scroll_y, return_rect,import_rect):
     # 1. Background
     screen.fill((30, 30, 35))
     for row in range(8):
@@ -1401,6 +1525,13 @@ def draw_saved_games_page(screen, games, scroll_y, return_rect):
     # 2. Title (Drawn BEFORE the scissors so it is always visible)
     title_surf = font_title.render("SAVED GAMES", True, (255, 255, 255))
     screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+
+    # --- IMPORT BUTTON (Drawn BEFORE the scissors!) ---
+    imp_col = (100, 150, 200) if import_rect.collidepoint(mouse_pos) else (80, 120, 160)
+    pygame.draw.rect(screen, imp_col, import_rect, border_radius=10)
+    pygame.draw.rect(screen, (255, 255, 255), import_rect, 2, border_radius=10)
+    imp_txt = font_text.render("IMPORT PGN", True, (255, 255, 255))
+    screen.blit(imp_txt, imp_txt.get_rect(center=import_rect.center))
 
     # 3. SET THE SCISSORS (The Window Pane)
     clip_rect = pygame.Rect(0, 130, SCREEN_WIDTH, SCREEN_HEIGHT - 250)
@@ -1455,21 +1586,69 @@ def draw_saved_games_page(screen, games, scroll_y, return_rect):
     screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
 
 
+def draw_paste_pgn_page(screen, status_msg: str, status_color: tuple, is_valid: bool, paste_rect, save_rect,
+                        return_rect):
+    # 1. Background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+    font_status = pygame.font.SysFont("Arial", 24, bold=True)
+
+    # 2. Title & Status Message
+    title_surf = font_title.render("IMPORT PGN", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+
+    status_surf = font_status.render(status_msg, True, status_color)
+    screen.blit(status_surf, status_surf.get_rect(center=(SCREEN_WIDTH // 2, 160)))
+
+    # 3. Paste Button (Blue)
+    p_color = (100, 150, 200) if paste_rect.collidepoint(mouse_pos) else (80, 120, 160)
+    pygame.draw.rect(screen, p_color, paste_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), paste_rect, 3, border_radius=15)
+    p_txt = font_btn.render("PASTE FROM CLIPBOARD", True, (255, 255, 255))
+    screen.blit(p_txt, p_txt.get_rect(center=paste_rect.center))
+
+    # 4. Save Button (Only Green if valid, otherwise dark grey)
+    if is_valid:
+        s_color = (80, 200, 80) if save_rect.collidepoint(mouse_pos) else (60, 150, 60)
+    else:
+        s_color = (60, 60, 60)  # Disabled
+    pygame.draw.rect(screen, s_color, save_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), save_rect, 3, border_radius=15)
+    s_txt = font_btn.render("SAVE GAME", True, (255, 255, 255) if is_valid else (150, 150, 150))
+    screen.blit(s_txt, s_txt.get_rect(center=save_rect.center))
+
+    # 5. Return Button
+    ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
+
 def draw_replay_side_menu(screen, show_notation: bool, current_move_text: str):
-    pygame.draw.rect(screen, (30, 30, 30), (WINDOW_SIZE, 0, MENU_WIDTH, SCREEN_HEIGHT))
-    pygame.draw.line(screen, (100, 100, 100), (WINDOW_SIZE, 0), (WINDOW_SIZE, SCREEN_HEIGHT), 2)
+    # 1. Background (Shifted to the right room using RIGHT_MENU_X)
+    pygame.draw.rect(screen, (30, 30, 30), (RIGHT_MENU_X, 0, SIDE_PANEL_WIDTH, SCREEN_HEIGHT))
+    pygame.draw.line(screen, (100, 100, 100), (RIGHT_MENU_X, 0), (RIGHT_MENU_X, SCREEN_HEIGHT), 2)
 
     mouse_pos = pygame.mouse.get_pos()
     pygame.font.init()
     font_btn = pygame.font.SysFont("Arial", 20, bold=True)
     font_large = pygame.font.SysFont("Arial", 28, bold=True)
 
-    # Move Tracker Label
+    # Move Tracker Label (Centered mathematically in the 220px panel)
+    center_x = RIGHT_MENU_X + (SIDE_PANEL_WIDTH // 2)
     lbl = font_large.render("Current Move:", True, (200, 200, 200))
-    screen.blit(lbl, lbl.get_rect(center=(WINDOW_SIZE + 100, 30)))
+    screen.blit(lbl, lbl.get_rect(center=(center_x, 30)))
 
     txt = font_large.render(current_move_text, True, (255, 200, 50))
-    screen.blit(txt, txt.get_rect(center=(WINDOW_SIZE + 100, 65)))
+    screen.blit(txt, txt.get_rect(center=(center_x, 65)))
 
     # Next Button (Green)
     n_col = (80, 200, 80) if REPLAY_NEXT_BTN.collidepoint(mouse_pos) else (60, 150, 60)
@@ -1501,37 +1680,29 @@ def draw_replay_side_menu(screen, show_notation: bool, current_move_text: str):
     m_txt = font_btn.render("Return to Menu", True, (255, 255, 255))
     screen.blit(m_txt, m_txt.get_rect(center=REPLAY_MENU_BTN.center))
 
-
 def draw_board(screen, show_notation: bool = False):
     for row in range(8):
         for col in range(8):
-            # 1. Paint the wood
             is_light_square = (row + col) % 2 == 0
             color = LIGHT if is_light_square else DARK
-            pygame.draw.rect(screen, color, (col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
+            # THE SHIFT
+            x_pos = BOARD_X_OFFSET + (col * SQUARE_SIZE)
+            y_pos = row * SQUARE_SIZE
+            pygame.draw.rect(screen, color, (x_pos, y_pos, SQUARE_SIZE, SQUARE_SIZE))
 
-            # 2. Paint the notation if the toggle is ON
             if show_notation and NOTATION_FONT is not None:
-                # Get the text (e.g., 'a8') and capitalize it ('A8')
                 notation_text = row_col_to_notation(row, col).lower()
-
-                # Make the text color the opposite of the wood color
                 text_color = DARK if is_light_square else LIGHT
-
-                # Carve the stamp and press it into the bottom left corner
                 text_surface = NOTATION_FONT.render(notation_text, True, text_color)
-
-                # Math: x is just past the left edge, y is just above the bottom edge
-                x_pos = col * SQUARE_SIZE + 4
-                y_pos = (row + 1) * SQUARE_SIZE - 18
-                screen.blit(text_surface, (x_pos, y_pos))
-
+                # THE SHIFT
+                screen.blit(text_surface, (x_pos + 4, y_pos + SQUARE_SIZE - 18))
 
 def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     """Paints the side control panel, clocks, and buttons."""
     # 1. Menu Background
-    pygame.draw.rect(screen, (30, 30, 30), (WINDOW_SIZE, 0, MENU_WIDTH, SCREEN_HEIGHT))
-    pygame.draw.line(screen, (100, 100, 100), (WINDOW_SIZE, 0), (WINDOW_SIZE, SCREEN_HEIGHT), 2)
+    pygame.draw.rect(screen, (30, 30, 30), (RIGHT_MENU_X, 0, SIDE_PANEL_WIDTH, SCREEN_HEIGHT))
+    pygame.draw.line(screen, (100, 100, 100), (RIGHT_MENU_X, 0), (RIGHT_MENU_X, SCREEN_HEIGHT), 2)
+
 
     pygame.font.init()
     font_large = pygame.font.SysFont("Arial", 32, bold=True)
@@ -1540,12 +1711,11 @@ def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     mouse_pos = pygame.mouse.get_pos()
 
     # 2. Black's Clock (Top)
-    # Width shrunk to 110, X-position moved slightly left to 20
-    pygame.draw.rect(screen, (20, 20, 20), (WINDOW_SIZE + 20, 20, 110, 60))
-    pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 20, 20, 110, 60), 2)
+    pygame.draw.rect(screen, (20, 20, 20), (RIGHT_MENU_X + 25, 20, 110, 60))
+    pygame.draw.rect(screen, (100, 100, 100), (RIGHT_MENU_X + 25, 20, 110, 60), 2)
 
     b_clock_txt = font_large.render(CLOCKS[ChessColor.BLACK].standard_notation(), True, (255, 255, 255))
-    b_txt_rect = b_clock_txt.get_rect(center=(WINDOW_SIZE + 75, 50))  # Centered mathematically
+    b_txt_rect = b_clock_txt.get_rect(center=(RIGHT_MENU_X + 80, 50))
     screen.blit(b_clock_txt, b_txt_rect)
 
     # --- Black's Flag Button ---
@@ -1556,11 +1726,11 @@ def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     screen.blit(f_txt, f_txt.get_rect(center=B_FLAG_BTN_RECT.center))
 
     # 3. White's Clock (Bottom)
-    pygame.draw.rect(screen, (220, 220, 220), (WINDOW_SIZE + 20, SCREEN_HEIGHT - 80, 110, 60))
-    pygame.draw.rect(screen, (100, 100, 100), (WINDOW_SIZE + 20, SCREEN_HEIGHT - 80, 110, 60), 2)
+    pygame.draw.rect(screen, (220, 220, 220), (RIGHT_MENU_X + 25, SCREEN_HEIGHT - 80, 110, 60))
+    pygame.draw.rect(screen, (100, 100, 100), (RIGHT_MENU_X + 25, SCREEN_HEIGHT - 80, 110, 60), 2)
 
     w_clock_txt = font_large.render(CLOCKS[ChessColor.WHITE].standard_notation(), True, (0, 0, 0))
-    w_txt_rect = w_clock_txt.get_rect(center=(WINDOW_SIZE + 75, SCREEN_HEIGHT - 50))
+    w_txt_rect = w_clock_txt.get_rect(center=(RIGHT_MENU_X + 80, SCREEN_HEIGHT - 50))
     screen.blit(w_clock_txt, w_txt_rect)
 
     # --- White's Flag Button ---
@@ -1639,6 +1809,34 @@ def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     menu_txt = font_small.render("Main Menu", True, (255, 255, 255))
     screen.blit(menu_txt, menu_txt.get_rect(center=MENU_BTN_RECT.center))
 
+
+def draw_live_diary(screen, move_log):
+    """Paints the move history on the FAR LEFT."""
+    pygame.draw.rect(screen, (25, 25, 30), (0, 0, SIDE_PANEL_WIDTH, SCREEN_HEIGHT))
+    pygame.draw.line(screen, (80, 80, 80), (SIDE_PANEL_WIDTH, 0), (SIDE_PANEL_WIDTH, SCREEN_HEIGHT), 2)
+
+    pygame.font.init()
+    font_header = pygame.font.SysFont("Arial", 24, bold=True)
+    font_moves = pygame.font.SysFont("Courier New", 18, bold=True)
+
+    header = font_header.render("MOVE HISTORY", True, (150, 150, 150))
+    screen.blit(header, (SIDE_PANEL_WIDTH // 2 - header.get_width() // 2, 15))
+
+    y_start = 60
+    line_height = 25
+    visible_log = move_log[-40:] if len(move_log) > 40 else move_log
+
+    for i in range(0, len(visible_log), 2):
+        turn_num = (i // 2) + 1
+        white_move = visible_log[i].algebraic_notation
+        black_move = visible_log[i + 1].algebraic_notation if (i + 1) < len(visible_log) else ""
+
+        move_str = f"{turn_num:2}. {white_move:6} {black_move}"
+        color = (200, 200, 200) if i >= len(visible_log) - 2 else (120, 120, 120)
+
+        move_surf = font_moves.render(move_str, True, color)
+        screen.blit(move_surf, (20, y_start + (i // 2) * line_height))
+
 def get_piece_image(piece: ChessPiece, cache):
     return get_piece_image_with_color_and_type(piece.color, piece.type, cache)
 
@@ -1658,11 +1856,54 @@ def get_piece_image_with_color_and_type(color, piece_type, cache):
     return cache[key]
 
 
+# <editor-fold desc="PROMOTION MENU">
+def draw_promotion_menu(screen, color: ChessColor, cache):
+    # 1. Dim the background OVER THE BOARD, not over the diary!
+    dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+    dim_surface.set_alpha(150)
+    dim_surface.fill((0, 0, 0))
+    screen.blit(dim_surface, (BOARD_X_OFFSET, 0))
+
+    # 2. Draw the white menu box in the dead center of the BOARD
+    menu_width = 4 * SQUARE_SIZE
+    menu_height = SQUARE_SIZE
+    # Add the offset!
+    start_x = BOARD_X_OFFSET + (WINDOW_SIZE - menu_width) // 2
+    start_y = (WINDOW_SIZE - menu_height) // 2
+
+    pygame.draw.rect(screen, (220, 220, 220), (start_x, start_y, menu_width, menu_height))
+    pygame.draw.rect(screen, (50, 50, 50), (start_x, start_y, menu_width, menu_height), 3)
+
+    # 3. Draw the 4 pieces and save their invisible clickable boxes
+    pieces = [ChessPieceType.QUEEN, ChessPieceType.ROOK, ChessPieceType.BISHOP, ChessPieceType.KNIGHT]
+    clickable_areas = []
+
+    for i, ptype in enumerate(pieces):
+        img = get_piece_image_with_color_and_type(color, ptype, cache)
+
+        # Calculate exact center for this piece's slot
+        center_x = start_x + (i * SQUARE_SIZE) + (SQUARE_SIZE // 2)
+        center_y = start_y + (SQUARE_SIZE // 2)
+
+        rect = img.get_rect(center=(center_x, center_y))
+        screen.blit(img, rect)
+
+        # Save the box and the piece type it represents
+        clickable_areas.append((rect, ptype))
+
+    return clickable_areas
+
+
+# </editor-fold>
+
 def draw_piece(screen, piece: ChessPiece, cache):
     if piece.position is None: return
     row, col = piece.position.row, piece.position.col
     img = get_piece_image(piece, cache)
-    rect = img.get_rect(center=(col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2))
+    # THE SHIFT
+    center_x = BOARD_X_OFFSET + (col * SQUARE_SIZE + SQUARE_SIZE // 2)
+    center_y = row * SQUARE_SIZE + SQUARE_SIZE // 2
+    rect = img.get_rect(center=(center_x, center_y))
     screen.blit(img, rect)
 
 
@@ -1674,27 +1915,14 @@ def draw_pieces(screen, board: Board, cache, dragged_piece=None):
 
 
 def highlight_square(screen, square: SquarePosition, color: tuple, alpha: int = 125, thickness: int = 8):
-    """Lays a see-through highlight over a square.
-       If thickness > 0, it draws a hollow picture frame instead."""
-    if square is None:
-        return
-
-    # 1. Create a special piece of glass that is 100% invisible by default
+    if square is None: return
     glass_pane = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
-
-    # 2. Mix the RGB paint with the Alpha (transparency)
     rgba_color = (color[0], color[1], color[2], alpha)
-
-    # 3. Paint the rectangle on the glass.
-    # If thickness is 0, it fills the whole glass.
-    # If thickness is 5, it just paints a 5-pixel border.
     pygame.draw.rect(glass_pane, rgba_color, glass_pane.get_rect(), width=thickness)
 
-    # 4. Calculate exactly where to put it on the floor
-    x = square.col * SQUARE_SIZE
+    # THE SHIFT
+    x = BOARD_X_OFFSET + (square.col * SQUARE_SIZE)
     y = square.row * SQUARE_SIZE
-
-    # 5. Lay it down
     screen.blit(glass_pane, (x, y))
 
 def get_square_center(pos: SquarePosition):
@@ -1705,10 +1933,10 @@ def get_square_center(pos: SquarePosition):
 
 
 def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition, color, padding=15, thickness=5):
-    start_x = start_square.col * SQUARE_SIZE + SQUARE_SIZE // 2
+    start_x = BOARD_X_OFFSET + (start_square.col * SQUARE_SIZE + SQUARE_SIZE // 2)
     start_y = start_square.row * SQUARE_SIZE + SQUARE_SIZE // 2
 
-    end_x = end_square.col * SQUARE_SIZE + SQUARE_SIZE // 2
+    end_x = BOARD_X_OFFSET + (end_square.col * SQUARE_SIZE + SQUARE_SIZE // 2)
     end_y = end_square.row * SQUARE_SIZE + SQUARE_SIZE // 2
 
     dx_squares = abs(end_square.col - start_square.col)
@@ -1789,17 +2017,18 @@ def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition,
             adj_end_y - arrow_length * math.sin(angle + math.pi / 6)
         )
         pygame.draw.polygon(screen, color, [tip, left, right])
-def draw_game_over_screen(screen, winner_color: ChessColor,is_draw = False):
-    # 1. Dim the background so the board looks "finished"
+def draw_game_over_screen(screen, winner_color: ChessColor, is_draw=False):
+    # 1. Dim the background so the board looks "finished" (Shifted to the center!)
     dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
     dim_surface.set_alpha(180)  # 0 is clear, 255 is solid black
     dim_surface.fill((0, 0, 0))
-    screen.blit(dim_surface, (0, 0))
+    screen.blit(dim_surface, (BOARD_X_OFFSET, 0))
 
-    # 2. Draw the menu box in the dead center
+    # 2. Draw the menu box in the dead center of the BOARD
     menu_width = 300
     menu_height = 160
-    start_x = (WINDOW_SIZE - menu_width) // 2
+    # Add the offset to push it into the center room
+    start_x = BOARD_X_OFFSET + (WINDOW_SIZE - menu_width) // 2
     start_y = (WINDOW_SIZE - menu_height) // 2
 
     pygame.draw.rect(screen, (40, 40, 40), (start_x, start_y, menu_width, menu_height))
@@ -1815,15 +2044,18 @@ def draw_game_over_screen(screen, winner_color: ChessColor,is_draw = False):
     else:
         text = f"{winner_color.value} WINS!"
 
+    # Calculate the exact center of the board
+    board_center_x = BOARD_X_OFFSET + (WINDOW_SIZE // 2)
+
     text_surface = font_large.render(text, True, (255, 255, 255))
-    text_rect = text_surface.get_rect(center=(WINDOW_SIZE // 2, start_y + 45))
+    text_rect = text_surface.get_rect(center=(board_center_x, start_y + 45))
     screen.blit(text_surface, text_rect)
 
     # 4. Draw the "Again?" Button
     btn_width = 140
     btn_height = 50
     btn_rect = pygame.Rect(0, 0, btn_width, btn_height)
-    btn_rect.center = (WINDOW_SIZE // 2, start_y + 110)
+    btn_rect.center = (board_center_x, start_y + 110)
 
     pygame.draw.rect(screen, (100, 200, 100), btn_rect)
     pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
@@ -1859,49 +2091,11 @@ NOTATION_FONT = None  # We will initialize this inside main()
 
 # </editor-fold>
 
-# <editor-fold desc="PROMOTION MENU">
-def draw_promotion_menu(screen, color: ChessColor, cache):
-    # 1. Dim the background so the board looks "paused"
-    dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
-    dim_surface.set_alpha(150)  # 0 is clear, 255 is solid black
-    dim_surface.fill((0, 0, 0))
-    screen.blit(dim_surface, (0, 0))
-
-    # 2. Draw the white menu box in the dead center
-    menu_width = 4 * SQUARE_SIZE
-    menu_height = SQUARE_SIZE
-    start_x = (WINDOW_SIZE - menu_width) // 2
-    start_y = (WINDOW_SIZE - menu_height) // 2
-
-    pygame.draw.rect(screen, (220, 220, 220), (start_x, start_y, menu_width, menu_height))
-    pygame.draw.rect(screen, (50, 50, 50), (start_x, start_y, menu_width, menu_height), 3)
-
-    # 3. Draw the 4 pieces and save their invisible clickable boxes
-    pieces = [ChessPieceType.QUEEN, ChessPieceType.ROOK, ChessPieceType.BISHOP, ChessPieceType.KNIGHT]
-    clickable_areas = []
-
-    for i, ptype in enumerate(pieces):
-        img = get_piece_image_with_color_and_type(color, ptype, cache)
-
-        # Calculate exact center for this piece's slot
-        center_x = start_x + (i * SQUARE_SIZE) + (SQUARE_SIZE // 2)
-        center_y = start_y + (SQUARE_SIZE // 2)
-
-        rect = img.get_rect(center=(center_x, center_y))
-        screen.blit(img, rect)
-
-        # Save the box and the piece type it represents
-        clickable_areas.append((rect, ptype))
-
-    return clickable_areas
-
-
-# </editor-fold>
-
 # <editor-fold desc="MAIN MENU">
 
 def run_general_settings_screen():
-    global SCREEN, AUTO_SAVE
+    # We must call in STARTING_TIME as global so we can actually change it!
+    global SCREEN, AUTO_SAVE, STARTING_TIME
     pygame_clock = pygame.time.Clock()
 
     while True:
@@ -1921,7 +2115,22 @@ def run_general_settings_screen():
                         btn_name = GENERAL_SETTINGS_OPTIONS[i]
 
                         if btn_name == "Auto Save":
-                            AUTO_SAVE = not AUTO_SAVE  # Flip the switch!
+                            PREFERENCES["auto_save"] = not PREFERENCES["auto_save"]
+                            save_preferences()  # Save instantly!
+
+                        elif btn_name == "Time Control":
+                            times = [60, 180, 300, 600, 1800]
+                            curr = PREFERENCES["starting_time"]
+
+                            # Cycle to next time
+                            idx = times.index(curr) if curr in times else 2
+                            PREFERENCES["starting_time"] = times[(idx + 1) % len(times)]
+
+                            # Update the actual game clocks
+                            for color in [ChessColor.WHITE, ChessColor.BLACK]:
+                                CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
+
+                            save_preferences()  # Save instantly!
 
         draw_general_settings_page(SCREEN)
         pygame.display.flip()
@@ -2018,23 +2227,83 @@ def run_replay_screen(pgn_string: str):
                                     highlighted_squares.add(right_click_start)
                         right_click_start = None
 
-        # --- DRAWING PHASE ---
-        SCREEN.fill((0, 0, 0))
-        draw_board(SCREEN, show_notation)
-        draw_replay_side_menu(SCREEN, show_notation, move_text)
+            # --- DRAWING PHASE ---
+            SCREEN.fill((0, 0, 0))
 
-        # Draw pieces using the global BOARD
-        draw_pieces(SCREEN, BOARD, IMAGE_CACHE)
+            # 1. Draw the Left Room (The Time-Traveling Diary!)
+            draw_live_diary(SCREEN, BOARD.move_log)
 
-        for square in highlighted_squares:
-            highlight_square(SCREEN, square, (200, 50, 50), alpha=100, thickness=0)
+            # 2. Draw the Center Room
+            draw_board(SCREEN, show_notation)
 
-        for start_pos, end_pos in drawn_arrows:
-            draw_arrow(SCREEN, start_pos, end_pos, (255, 170, 0))
+            # 3. Draw the Right Room
+            draw_replay_side_menu(SCREEN, show_notation, move_text)
 
+            # Draw pieces using the global BOARD
+            draw_pieces(SCREEN, BOARD, IMAGE_CACHE)
+
+            for square in highlighted_squares:
+                highlight_square(SCREEN, square, (200, 50, 50), alpha=100, thickness=0)
+
+            for start_pos, end_pos in drawn_arrows:
+                draw_arrow(SCREEN, start_pos, end_pos, (255, 170, 0))
+
+            pygame.display.flip()
+            pygame_clock.tick(FPS)
+
+
+def run_paste_pgn_screen():
+    global SCREEN
+    pygame_clock = pygame.time.Clock()
+    pygame.scrap.init()
+
+    paste_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, 220, 400, 60)
+    save_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, 320, 400, 60)
+    return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
+
+    pasted_text = ""
+    status_msg = "Click Paste to load from clipboard"
+    status_color = (200, 200, 200)
+    is_valid = False
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # 1. Return
+                if return_rect.collidepoint(event.pos):
+                    return
+
+                # 2. Paste Button
+                elif paste_rect.collidepoint(event.pos):
+                    raw_bytes = pygame.scrap.get(pygame.SCRAP_TEXT)
+                    if raw_bytes:
+                        # Clean invisible Windows clipboard junk and decode it
+                        pasted_text = raw_bytes.replace(b'\x00', b'').decode('utf-8', errors='ignore').strip()
+                        # Send it to the Shadow Board!
+                        if is_pgn_valid(pasted_text):
+                            status_msg = "Valid PGN! Ready to save."
+                            status_color = (80, 200, 80)
+                            is_valid = True
+                        else:
+                            status_msg = "Invalid PGN. Check your text."
+                            status_color = (200, 80, 80)
+                            is_valid = False
+                    else:
+                        status_msg = "Clipboard is empty!"
+                        status_color = (200, 80, 80)
+
+                # 3. Save Button
+                elif save_rect.collidepoint(event.pos) and is_valid:
+                    save_custom_pgn(pasted_text)
+                    return  # Exit the room instantly so the Saved Games list refreshes!
+
+        draw_paste_pgn_page(SCREEN, status_msg, status_color, is_valid, paste_rect, save_rect, return_rect)
         pygame.display.flip()
         pygame_clock.tick(FPS)
-
 
 def run_saved_games_screen():
     global SCREEN
@@ -2053,6 +2322,7 @@ def run_saved_games_screen():
     window_pane_height = SCREEN_HEIGHT - 250
     max_scroll = max(0, total_content_height - window_pane_height + 20)
 
+    import_rect = pygame.Rect(SCREEN_WIDTH - 220, 20, 200, 50)  # Top right corner
     return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 80, 300, 60)
     clip_rect = pygame.Rect(0, 130, SCREEN_WIDTH, SCREEN_HEIGHT - 250)
 
@@ -2072,6 +2342,13 @@ def run_saved_games_screen():
                 # 1. Return Button
                 if return_rect.collidepoint(event.pos):
                     return
+                # NEW IMPORT DOOR
+                if import_rect.collidepoint(event.pos):
+                    run_paste_pgn_screen()
+                    # We must refresh the Librarian when we get back so the new game shows up!
+                    games = get_saved_games_data()
+                    total_content_height = len(games) * card_height
+                    max_scroll = max(0, total_content_height - window_pane_height + 20)
 
                 # 2. Check game buttons IF click is inside the window pane
                 if clip_rect.collidepoint(event.pos):
@@ -2096,6 +2373,10 @@ def run_saved_games_screen():
                             # 1. Safely delete the file
                             filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, game['filename'])
                             if os.path.exists(filepath):
+                                print(filepath)
+                                game_number = int("".join([c if c.isdigit() else "" for c in filepath]))
+                                PREFERENCES['game_counter'] = game_number
+                                save_preferences()
                                 os.remove(filepath)
                                 print(f"Deleted {game['filename']}")
 
@@ -2109,7 +2390,7 @@ def run_saved_games_screen():
                             # 4. Snap the elevator back up if we were at the very bottom
                             scroll_y = min(scroll_y, max_scroll)
 
-        draw_saved_games_page(SCREEN, games, scroll_y, return_rect)
+        draw_saved_games_page(SCREEN, games, scroll_y, return_rect,import_rect)
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
@@ -2173,6 +2454,7 @@ def run_home_screen():
 def main():
     global SCREEN, BOARD, IMAGE_CACHE, PLAYERS,NOTATION_FONT
 
+    load_preferences()
     pygame.init()
 
     NOTATION_FONT = pygame.font.SysFont("Arial", 14, bold=True)
@@ -2180,12 +2462,12 @@ def main():
     SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED|pygame.RESIZABLE)
     pygame.display.set_caption("Chess")
 
+
     home_screen_action = run_home_screen()
     if home_screen_action == "QUIT":
         pygame.quit()
         sys.exit()
 
-    # clocks
 
     pygame_clock = pygame.time.Clock()
     BOARD.load_fen(STARTING_POSITION)
@@ -2241,8 +2523,14 @@ def main():
         # 4. Reset the clocks
         for clock in CLOCKS.values():
             clock.reset()
+
         CLOCKS[BOARD.active_color].start()
         CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
+
+    # --- THE CRITICAL SYNC ---
+    # Tell the clocks: "I know you were born with 5 mins, but the file says 10!"
+    for color in [ChessColor.WHITE, ChessColor.BLACK]:
+        CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
 
     CLOCKS[BOARD.active_color].start()
 
@@ -2461,9 +2749,18 @@ def main():
 
         # --- DRAWING PHASE ---
         SCREEN.fill((0, 0, 0))
-        draw_board(SCREEN,show_notation)
 
-        draw_side_menu(SCREEN, show_notation,is_paused)
+        # Draw the Right Room
+        draw_side_menu(SCREEN, show_notation, is_paused)
+
+        # Draw the Left Room
+        draw_live_diary(SCREEN, BOARD.move_log)
+
+        # Draw the Center Room
+        draw_board(SCREEN, show_notation)
+
+        dragged_piece = picking_piece if is_dragging else None
+        draw_pieces(SCREEN, BOARD, IMAGE_CACHE, dragged_piece)
 
         # Draw all pieces EXCEPT the one being dragged
         dragged_piece = picking_piece if is_dragging else None
@@ -2506,7 +2803,7 @@ def main():
 
         if winner is not None or BOARD.is_draw:
             game_over_btn_rect = draw_game_over_screen(SCREEN, winner,BOARD.is_draw)
-            if AUTO_SAVE and not has_auto_saved:
+            if PREFERENCES["auto_save"] and not has_auto_saved:
                 create_new_chess_file(BOARD)
                 has_auto_saved = True
                 print("Auto-saved game successfully.")
