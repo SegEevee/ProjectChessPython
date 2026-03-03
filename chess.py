@@ -1,9 +1,12 @@
+from zoneinfo import reset_tzpath
+
 import pygame
 import sys
 import math
 import os
 import json
 import re
+import random
 from enum import Enum
 
 
@@ -16,7 +19,9 @@ PREFERENCES_FILE = os.path.join(DIRECTORY_OF_GENERAL_SETTINGS, "preferences.json
 PREFERENCES = {
     "game_counter": 1,
     "auto_save": True,
-    "starting_time": 5 * 60
+    "starting_time": 5 * 60,
+    "game_mode": "Multiplayer",  # <--- ADD THIS
+    "player_color": "White"      # <--- ADD THIS
 }
 
 #</editor-fold>
@@ -71,7 +76,7 @@ RETURN_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 30
 #<editor-fold desc="GENERAL SETTINGS">
 
 #<editor-fold desc="GENERAL SETTINGS UI">
-GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control"]
+GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color"]
 GENERAL_SETTINGS_RECTS = []
 
 for i in range(len(GENERAL_SETTINGS_OPTIONS)):
@@ -1495,6 +1500,18 @@ def draw_general_settings_page(screen):
             # Use the dictionary value!
             txt_str = f"Time: {PREFERENCES['starting_time'] // 60} Min"
 
+        elif btn_name == "Game Mode":
+            color = (120, 100, 180) if rect.collidepoint(mouse_pos) else (100, 80, 150)  # Purple
+            txt_str = f"Mode: {PREFERENCES['game_mode']}"
+
+        elif btn_name == "Player Color":
+            if PREFERENCES["game_mode"] == "Multiplayer":
+                color = (60, 60, 60)  # Dark Grey (Disabled)
+                txt_str = "Color: N/A"
+            else:
+                color = (180, 120, 100) if rect.collidepoint(mouse_pos) else (150, 100, 80)  # Orange
+                txt_str = f"Play as: {PREFERENCES['player_color']}"
+
         pygame.draw.rect(screen, color, rect, border_radius=15)
         pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
 
@@ -2091,6 +2108,96 @@ NOTATION_FONT = None  # We will initialize this inside main()
 
 # </editor-fold>
 
+#<editor-fold desc="AI">
+def evaluate_board(board, ai_color: ChessColor) -> int:
+    """Calculates the 'Score' of the board. Positive is good for AI, negative is bad."""
+    score = 0
+    piece_values = {
+        ChessPieceType.PAWN: 10,
+        ChessPieceType.KNIGHT: 30,
+        ChessPieceType.BISHOP: 30,
+        ChessPieceType.ROOK: 50,
+        ChessPieceType.QUEEN: 90,
+        ChessPieceType.KING: 9000
+    }
+
+    for piece in board.get_all_pieces():
+        value = piece_values[piece.type]
+        # If it's our piece, add points. If it's the enemy, subtract points.
+        if piece.color == ai_color:
+            score += value
+        else:
+            score -= value
+
+    return score
+
+def get_greedy_ai_move(board, ai_color: ChessColor):
+    """The AI tests every move, scores the future board, and picks the best one."""
+    best_move = None
+    # Start with the worst possible score so any move will beat it
+    best_score = -99999
+
+    all_possible_moves = []
+    for piece in board.get_all_pieces():
+        if piece.color == ai_color:
+            for move in piece.legal_moves.values():
+                all_possible_moves.append(move)
+
+    if not all_possible_moves:
+        return None
+
+    # Shuffle the moves so the AI doesn't play the exact same game every time
+    random.shuffle(all_possible_moves)
+
+    for move in all_possible_moves:
+        # Default to Queen for promotions
+        if move.move_type == MoveType.PROMOTION:
+            move.promotion_choice = ChessPieceType.QUEEN
+
+        # 1. TIME TRAVEL FORWARD (Imagine the move)
+        board.execute_move(move)
+
+        # 2. LOOK AT THE FUTURE (Score the board)
+        current_score = evaluate_board(board, ai_color)
+
+        # 3. TIME TRAVEL BACKWARD (Undo the imagination)
+        board.undo_move()
+
+        # 4. RECORD THE BEST UNIVERSE
+        if current_score > best_score:
+            best_score = current_score
+            best_move = move
+
+    return best_move
+
+def get_random_ai_move(board, ai_color: ChessColor): #PLACEHOLDER
+    """The AI Brain: Gathers every possible move and pulls one out of a hat."""
+    all_possible_moves = []
+
+    # 1. Walk through the whole board and look at our pieces
+    for piece in board.get_all_pieces():
+        if piece.color == ai_color:
+            # 2. Dump every legal move this piece has into our giant bucket
+            for move in piece.legal_moves.values():
+                all_possible_moves.append(move)
+
+    if not all_possible_moves:
+        return None  # Checkmate or Stalemate, nothing to do!
+
+    # 3. Close eyes, reach into bucket, pull out a random move
+    chosen_move = random.choice(all_possible_moves)
+
+    # 4. If by pure luck the random move is a pawn promotion, default to a Queen!
+    if chosen_move.move_type == MoveType.PROMOTION:
+        chosen_move.promotion_choice = ChessPieceType.QUEEN
+
+    return chosen_move
+
+
+def get_AI_move(board,ai_color:ChessColor):
+    return get_greedy_ai_move(board,ai_color)
+#</editor-fold>
+
 # <editor-fold desc="MAIN MENU">
 
 def run_general_settings_screen():
@@ -2121,6 +2228,21 @@ def run_general_settings_screen():
                         elif btn_name == "Time Control":
                             times = [60, 180, 300, 600, 1800]
                             curr = PREFERENCES["starting_time"]
+
+                        elif btn_name == "Game Mode":
+                            if PREFERENCES["game_mode"] == "Multiplayer":
+                                PREFERENCES["game_mode"] = "Singleplayer"
+                            else:
+                                PREFERENCES["game_mode"] = "Multiplayer"
+                            save_preferences()
+
+                        elif btn_name == "Player Color":
+                            if PREFERENCES["game_mode"] == "Singleplayer":
+                                if PREFERENCES["player_color"] == "White":
+                                    PREFERENCES["player_color"] = "Black"
+                                else:
+                                    PREFERENCES["player_color"] = "White"
+                                save_preferences()
 
                             # Cycle to next time
                             idx = times.index(curr) if curr in times else 2
@@ -2520,12 +2642,25 @@ def main():
         #only relevent if autosave is true
         has_auto_saved = False
 
+        ai_thinking_timer = 0
+
         # 4. Reset the clocks
         for clock in CLOCKS.values():
             clock.reset()
 
         CLOCKS[BOARD.active_color].start()
         CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
+    def undo_move():
+        nonlocal drawn_arrows,highlighted_squares,picking_piece,is_dragging,promotion_pending
+
+        BOARD.undo_move()
+        drawn_arrows.clear()
+        highlighted_squares.clear()
+        picking_piece = None
+        is_dragging = False
+        promotion_pending = None
+
+        ai_thinking_timer = 0
 
     # --- THE CRITICAL SYNC ---
     # Tell the clocks: "I know you were born with 5 mins, but the file says 10!"
@@ -2533,6 +2668,11 @@ def main():
         CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
 
     CLOCKS[BOARD.active_color].start()
+
+    ai_color = None
+    if PREFERENCES["game_mode"] == "Singleplayer":
+        ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
+    ai_thinking_timer = 0
 
     is_paused = False
     running = True
@@ -2543,13 +2683,7 @@ def main():
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_LEFT:
-                    BOARD.undo_move()
-                    # Cancel any active UI states so the board doesn't glitch
-                    picking_piece = None
-                    is_dragging = False
-                    promotion_pending = None
-                    drawn_arrows.clear()
-                    highlighted_squares.clear()
+                    undo_move()
 
                 # --- FULLSCREEN TOGGLE ---
                 elif event.key == pygame.K_F11:
@@ -2572,12 +2706,7 @@ def main():
 
                     # 1. UI BUTTON INTERCEPTS (Menu area)
                     if UNDO_BTN_RECT.collidepoint(event.pos):
-                        BOARD.undo_move()
-                        drawn_arrows.clear()
-                        highlighted_squares.clear()
-                        picking_piece = None
-                        is_dragging = False
-                        promotion_pending = None
+                        undo_move()
                         continue
 
                     if NOTATION_BTN_RECT.collidepoint(event.pos):
@@ -2654,9 +2783,12 @@ def main():
                             reset_match()
                             continue  # DO NOT LET THEM CLICK THE BOARD
 
+                    # 3. IS THERE AI??? FRFR
+                    if ai_color is not None and BOARD.active_color == ai_color:
+                        continue
 
 
-                    #3 - PROMOTION - DID IT PROMOTE??
+                    #4 - PROMOTION - DID IT PROMOTE??
                     if promotion_pending is not None:
                         for rect, piece_type in promotion_rects:
                             if rect.collidepoint(event.pos):
@@ -2812,6 +2944,27 @@ def main():
                 clock.stop()
         else:
             game_over_btn_rect = None
+
+        # ==========================================
+        # THE AI'S TURN
+        # ==========================================
+        if not is_paused and game_over_btn_rect is None:
+            if ai_color is not None and BOARD.active_color == ai_color:
+                # Tell Pygame to draw the board quickly before the AI thinks
+                pygame.display.flip()
+
+                ai_thinking_timer += DT
+
+                # 2. Has the AI thought for long enough? (Let's say 0.5 seconds)
+                if ai_thinking_timer >= 1:
+                    ai_move = get_AI_move(BOARD, ai_color)
+                    if ai_move:
+                        BOARD.execute_move(ai_move)
+
+                    # 3. Reset the stopwatch for the next turn
+                    ai_thinking_timer = 0
+
+
 
         pygame.display.flip()
         pygame_clock.tick(FPS)
