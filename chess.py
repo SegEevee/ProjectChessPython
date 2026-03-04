@@ -1,9 +1,9 @@
-from zoneinfo import reset_tzpath
-
 import pygame
+import numpy as np
 import sys
 import math
 import os
+import io
 import json
 import re
 import random
@@ -53,6 +53,13 @@ PICKING_PIECE_HIGHLIGHT_COLOR = (0, 255, 255)
 LEGAL_MOVES_HIGHLIGHT_COLOR = (67, 67, 67)
 RIGHT_CLICK_HIGHLIGHT_SQUARE_COLOR = (210, 43, 43)
 
+#<editor-fold desc="AI ELEMENTS"
+AGREED_GET_BEST_MOVE_THRESHOLD = 0.2
+BOT_THINKING_TIME = 0.3
+BOT_SEARCH_DEPTH = 4
+#</editor-fold>
+
+#<editor-fold desc="UI ELEMENTS">
 
 #<editor-fold desc="SETTINGS MENU CONFIG">
 # To add a new button, literally just type its name in this list!
@@ -143,6 +150,7 @@ B_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, 80, 40, 40)
 W_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 120, 40, 40)
 # </editor-fold>
 
+#</editor-fold>
 
 #</editor-fold>
 
@@ -218,12 +226,9 @@ def pgn_to_move_list(pgn_string: str) -> list[str]:
         # Strip move numbers (1. or 24...)
         clean_token = re.sub(r'^\d+\.*', '', t)
 
-
-        if clean_token and len(clean_token) < 10 and not any(c in clean_token for c in '/+='):
-            # Special case: allow '=' only if it's a promotion (e.g., e8=Q)
-            if '=' in clean_token and not re.match(r'^[a-h][18]=[QRBN]', clean_token):
-                continue
+        if clean_token and len(clean_token) < 10 and '/' not in clean_token:
             moves.append(clean_token)
+
         # Exception: Castling
         elif clean_token in ("O-O", "O-O-O"):
             moves.append(clean_token)
@@ -803,19 +808,21 @@ class King(ChessPiece):
 
 class MoveRecord:
     """A single page in the Diary, holding a photograph of the past."""
-    def __init__(self, move: Move, moved_piece, piece_had_moved: bool, victim_piece,clocks, old_en_passant, old_castling_rights,algebraic_notation):
-        self.move = move
 
+    def __init__(self, move: Move, moved_piece, piece_had_moved: bool, victim_piece, clocks, old_en_passant,
+                 old_castling_rights, algebraic_notation, is_imagining=False):
+        self.move = move
         self.moved_piece = moved_piece
         self.piece_had_moved = piece_had_moved
         self.victim_piece = victim_piece
-
-        self.current_times = {ChessColor.WHITE: clocks[ChessColor.WHITE].previous_time, ChessColor.BLACK: clocks[ChessColor.BLACK].previous_time}
-
+        self.current_times = {ChessColor.WHITE: clocks[ChessColor.WHITE].previous_time,
+                              ChessColor.BLACK: clocks[ChessColor.BLACK].previous_time}
         self.old_en_passant = old_en_passant
         self.old_castling_rights = old_castling_rights
-
         self.algebraic_notation = algebraic_notation
+
+        # THE FIX: Remember if this was a ghost move!
+        self.is_imagining = is_imagining
 
 # </editor-fold>
 
@@ -1121,7 +1128,7 @@ class Board:
             else:
                 self.is_stalemate = False
 
-    def execute_move(self, move: Move):
+    def execute_move(self, move: Move, is_imagining = False):
         """Replaces the old 'move_piece' and natively handles En Passant using the Move manual."""
         piece = self.get_piece_at(move.from_pos)
         if not piece: return
@@ -1132,7 +1139,10 @@ class Board:
         # Find out if anyone is about to die
         victim = self.get_piece_at(move.victim_pos) if move.victim_pos else None
 
-        san_string = self.get_algebraic_notation(move, piece, victim)
+        if is_imagining:
+            san_string = "GHOST_MOVE"
+
+        else: san_string = self.get_algebraic_notation(move, piece, victim)
 
         # Take the photograph
         record = MoveRecord(
@@ -1143,7 +1153,8 @@ class Board:
             victim_piece=victim,
             old_en_passant=self.en_passant,
             old_castling_rights=self.castling_rights,
-            algebraic_notation=san_string
+            algebraic_notation=san_string,
+            is_imagining=is_imagining
         )
 
         # Save it in the book
@@ -1177,9 +1188,15 @@ class Board:
         #check promotion
         if move.move_type == MoveType.PROMOTION:
             piece.die()
+
+            promo_type = move.promotion_choice
+            if promo_type is None or is_imagining:
+                promo_val = ChessPieceType.QUEEN.value
+            else:
+                promo_val = str(promo_type.value)
+
             self.grid[move.to_pos.row][move.to_pos.col] = create_piece_with_specified_color(piece.color,
-                                                                                            str(move.promotion_choice.value),
-                                                                                            move.to_pos)
+                promo_val, move.to_pos)
 
         # 3. En Passant Memory Update
         self.en_passant = None  # Always clear old memory
@@ -1353,9 +1370,10 @@ class Board:
         self.en_passant = record.old_en_passant
         self.castling_rights = record.old_castling_rights
 
-        #6. Restore the clock time
-        for color in ChessColor:
-            CLOCKS[color].remaining = record.current_times[color]
+        # 6. Restore the clock time (ONLY IF REAL)
+        if not record.is_imagining:
+            for color in ChessColor:
+                CLOCKS[color].remaining = record.current_times[color]
 
         # 7. Give the turn back and recalculate check
         self.switch_turn()
@@ -1366,7 +1384,7 @@ class Board:
 
 
 
-    # </editor-fold>
+# </editor-fold>
 
 
 # </editor-fold>
@@ -2105,72 +2123,183 @@ IMAGE_CACHE = {}
 
 NOTATION_FONT = None  # We will initialize this inside main()
 
+CHESS_MODEL = None
+EVALUATION_CACHE = {}
 
 # </editor-fold>
 
-#<editor-fold desc="AI">
-def evaluate_board(board, ai_color: ChessColor) -> int:
-    """Calculates the 'Score' of the board. Positive is good for AI, negative is bad."""
-    score = 0
-    piece_values = {
-        ChessPieceType.PAWN: 10,
-        ChessPieceType.KNIGHT: 30,
-        ChessPieceType.BISHOP: 30,
-        ChessPieceType.ROOK: 50,
-        ChessPieceType.QUEEN: 90,
-        ChessPieceType.KING: 9000
-    }
+#<editor-fold desc="BOT">
 
-    for piece in board.get_all_pieces():
-        value = piece_values[piece.type]
-        # If it's our piece, add points. If it's the enemy, subtract points.
-        if piece.color == ai_color:
-            score += value
-        else:
-            score -= value
+#<editor-fold desc="NEURAL NETWORK">
+# from keras.models import load_model
+#
+#
+# import zstandard as zstd
+# from keras.models import Sequential
+# from keras.layers import Dense, Dropout, Input
+# from keras.callbacks import EarlyStopping
+#
+#
+#
+# def ai_get_evaluation(board):
+#     """Asks the trained brain: 'Who is winning right now?'"""
+#     global CHESS_MODEL, EVALUATION_CACHE
+#
+#     current_fen = board.generate_fen()
+#
+#     # THE SPEED HACK: Did we already calculate this exact board today?
+#     if current_fen in EVALUATION_CACHE:
+#         return EVALUATION_CACHE[current_fen]
+#
+#     if CHESS_MODEL is None:
+#         try:
+#             CHESS_MODEL = load_model('models/chess_brain.keras')
+#             print("AI Brain Loaded Successfully.")
+#         except Exception as e:
+#             print(f"Error loading AI model: {e}")
+#             return 0.5
+# # ==========================================
+# # 1. THE TRANSLATOR (FEN -> 768 Array)
+# # ==========================================
+#
+#
+# # ==========================================
+# # 2. THE DATA FACTORY (Raw JSON -> Big Data)
+# # ==========================================
+# def squish_score(cp: int) -> float:
+#     """Turns Centipawns (-300 to +300) into a Win Probability (0.0 to 1.0)."""
+#     # This is a classic chess math trick.
+#     # 0 cp = 0.5 probability.
+#     # +400 cp = ~0.99 probability.
+#     return 1 / (1 + math.exp(-0.004 * cp))
+#
+#
+# def build_chess_database(zst_file_path: str, output_name: str, max_rows: int = 10000):
+#     """Eats a compressed .zst file line by line without exploding your RAM."""
+#     X = []
+#     y = []
+#
+#     print(f"Factory started. Streaming massive file: {zst_file_path}...")
+#
+#     try:
+#         # 1. Open the compressed file in 'binary read' mode
+#         with open(zst_file_path, 'rb') as compressed_file:
+#             # 2. Attach the Zstandard unzipper
+#             dctx = zstd.ZstdDecompressor()
+#
+#             # 3. Create a stream (a pipe) that reads the unzipped data as text
+#             with dctx.stream_reader(compressed_file) as reader:
+#                 text_stream = io.TextIOWrapper(reader, encoding='utf-8')
+#
+#                 # 4. Read it line by line (Sipping from the firehose)
+#                 for i, line in enumerate(text_stream):
+#                     if i >= max_rows:
+#                         break  # THE SAFETY VALVE
+#
+#                     data = json.loads(line)
+#                     fen = data['fen']
+#
+#                     try:
+#                         best_eval = data['evals'][0]['pvs'][0]
+#
+#                         if 'mate' in best_eval:
+#                             mate_in = best_eval['mate']
+#                             score = 1.0 if mate_in > 0 else 0.0
+#                         else:
+#                             cp = best_eval['cp']
+#                             score = squish_score(cp)
+#
+#                         X.append(fen_to_features(fen))
+#                         y.append(score)
+#
+#                     except (KeyError, IndexError):
+#                         # Skip broken lines
+#                         continue
+#
+#                         # A heartbeat monitor so you know it hasn't crashed
+#                     if (i + 1) % 5000 == 0:
+#                         print(f"Processed {i + 1} boards...")
+#
+#         # 5. Save the translated numbers
+#         np.savez_compressed(f'data/{output_name}.npz', X=np.array(X), y=np.array(y))
+#         print(f"Success! Processed {len(X)} valid boards and saved to data/{output_name}.npz")
+#
+#     except FileNotFoundError:
+#         print(f"ERROR: Could not find the file at {zst_file_path}. Check the path!")
+#
+#
+# # ==========================================
+# # 3. THE BLANK CANVAS (Your Neural Network)
+# # ==========================================
+# def train_chess_brain():
+#     """Load the processed data and train the AI."""
+#     print("Loading data...")
+#     data = np.load('data/chess_training_data.npz')
+#     X = data['X']
+#     y = data['y']
+#
+#     print("Data loaded.")
+#
+#
+#     model = Sequential([
+#         Input(shape=(768,)),  # 64 squares * 12 piece types
+#         Dense(512, activation='relu'),  # Big layer to find piece relationships
+#         Dropout(0.2),  # Prevents "Memorization" (Overfitting)
+#         Dense(256, activation='relu'),  # Finding positional patterns
+#         Dense(128, activation='relu'),  # Refining the score
+#         Dense(1, activation='sigmoid')  # Final Win Probability (0 to 1)
+#     ])
+#
+#     # 2. THE JUDGE
+#     model.compile(
+#         optimizer='adam',
+#         loss='mean_squared_error',  # Since y is a continuous probability
+#         metrics=['mae']  # Mean Absolute Error (how far we miss)
+#     )
+#
+#     # 3. THE KILL-SWITCH
+#     stop_early = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+#
+#     print("Training Beginning. This might take a few minutes...")
+#     model.fit(
+#         X, y,
+#         epochs=250,
+#         batch_size=64,
+#         callbacks=[stop_early]
+#     )
+#
+#     # 4. EXPORT THE KNOWLEDGE
+#     model.save('models/chess_brain.keras')
+#     print("Success! The Chess Brain is saved in models/chess_brain.keras")
+#
+#
+# # ==========================================
+# # 4. THE DEMI-BOARD (Headless Testing)
+# # ==========================================
+# def test_ai_without_graphics():
+#     """Runs a ghost board in memory so you don't have to load Pygame UI."""
+#     print("Summoning ghost board...")
+#     # You use your existing Board class, but we don't call the Pygame while-loop!
+#     ghost_board = Board(STARTING_POSITION)
+#
+#     print(f"Ghost Board FEN: {ghost_board.generate_fen()}")
+#
+#     # Test your translator
+#     features = fen_to_features(ghost_board.generate_fen())
+#     print(f"Features Array Shape: {features.shape}")
+#     print(f"Is White Rook on A1 (Index 3)? Value: {features[3]}")
+#
+#     # In the future, this is where you will load your trained model
+#     # and ask it to predict the score of the ghost_board!
+#
+#
+#
+#
+#</editor-fold>
+#THIS AREA IS CURRENTLY UNUSED! PLEASE DO NOT USE IT.
 
-    return score
 
-def get_greedy_ai_move(board, ai_color: ChessColor):
-    """The AI tests every move, scores the future board, and picks the best one."""
-    best_move = None
-    # Start with the worst possible score so any move will beat it
-    best_score = -99999
-
-    all_possible_moves = []
-    for piece in board.get_all_pieces():
-        if piece.color == ai_color:
-            for move in piece.legal_moves.values():
-                all_possible_moves.append(move)
-
-    if not all_possible_moves:
-        return None
-
-    # Shuffle the moves so the AI doesn't play the exact same game every time
-    random.shuffle(all_possible_moves)
-
-    for move in all_possible_moves:
-        # Default to Queen for promotions
-        if move.move_type == MoveType.PROMOTION:
-            move.promotion_choice = ChessPieceType.QUEEN
-
-        # 1. TIME TRAVEL FORWARD (Imagine the move)
-        board.execute_move(move)
-
-        # 2. LOOK AT THE FUTURE (Score the board)
-        current_score = evaluate_board(board, ai_color)
-
-        # 3. TIME TRAVEL BACKWARD (Undo the imagination)
-        board.undo_move()
-
-        # 4. RECORD THE BEST UNIVERSE
-        if current_score > best_score:
-            best_score = current_score
-            best_move = move
-
-    return best_move
-
-def get_random_ai_move(board, ai_color: ChessColor): #PLACEHOLDER
+def get_random_bot_move(board, ai_color: ChessColor): #PLACEHOLDER
     """The AI Brain: Gathers every possible move and pulls one out of a hat."""
     all_possible_moves = []
 
@@ -2194,8 +2323,11 @@ def get_random_ai_move(board, ai_color: ChessColor): #PLACEHOLDER
     return chosen_move
 
 
-def get_AI_move(board,ai_color:ChessColor):
-    return get_greedy_ai_move(board,ai_color)
+def get_bot_move(board, ai_color:ChessColor):
+    import chess_engine
+    chess_engine.initialize_engine(ChessColor, ChessPieceType)
+    return chess_engine.ai_get_best_move(board, ai_color,search_depth=BOT_SEARCH_DEPTH)
+
 #</editor-fold>
 
 # <editor-fold desc="MAIN MENU">
@@ -2245,8 +2377,8 @@ def run_general_settings_screen():
                                 save_preferences()
 
                             # Cycle to next time
-                            idx = times.index(curr) if curr in times else 2
-                            PREFERENCES["starting_time"] = times[(idx + 1) % len(times)]
+                            # idx = times.index(curr) if curr in times else 2
+                            # PREFERENCES["starting_time"] = times[(idx + 1) % len(times)]
 
                             # Update the actual game clocks
                             for color in [ChessColor.WHITE, ChessColor.BLACK]:
@@ -2956,8 +3088,8 @@ def main():
                 ai_thinking_timer += DT
 
                 # 2. Has the AI thought for long enough? (Let's say 0.5 seconds)
-                if ai_thinking_timer >= 1:
-                    ai_move = get_AI_move(BOARD, ai_color)
+                if ai_thinking_timer >= BOT_THINKING_TIME:
+                    ai_move = get_bot_move(BOARD, ai_color)
                     if ai_move:
                         BOARD.execute_move(ai_move)
 

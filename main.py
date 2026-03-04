@@ -1,5 +1,4 @@
 import chess
-import queue
 import tempchess
 def main():
     chess.main()
