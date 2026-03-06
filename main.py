@@ -1,5 +1,4 @@
 import chess
-import tempchess
 def main():
     chess.main()
 

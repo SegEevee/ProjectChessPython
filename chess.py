@@ -1,18 +1,62 @@
 import pygame
-import numpy as np
+from pygame import mixer as dj
 import sys
 import math
 import os
-import io
 import json
 import re
 import random
 from enum import Enum
 
 
+from side_scripts import opening_books as openings
+from side_scripts import python_glue as bot
+
 #<editor-fold desc="FILES AND PREFERENCES">
-DIRECTORY_OF_SAVED_GAMES = "saved_games"
-DIRECTORY_OF_GENERAL_SETTINGS = "settings_data"
+def get_asset_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # If not running as exe, use the normal folder
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+def get_permanent_path():
+    """ Finds the exact permanent folder where the game lives (The Red Box). """
+    if getattr(sys, 'frozen', False):
+        # I am running as a built PyInstaller .exe
+        return os.path.dirname(sys.executable)
+    else:
+        # I am running as a normal .py script in VS Code
+        return os.path.abspath(os.path.dirname(__file__))
+
+def get_audio_path(sound_name):
+    """
+    The Radio Station: Instead of a fixed list, build the path
+    based on whatever 'sound_pack' is in the preferences right now.
+    """
+    pack = PREFERENCES.get("sound_pack", "Default")
+
+    # Music files are .mp3, everything else (SFX) is .wav
+    extension = ".mp3" if "music" in sound_name else ".wav"
+
+    # We build the string: assets/sounds/[PackName]/[SoundName].wav
+    relative_path = os.path.join("assets", "sounds", pack, f"{sound_name}{extension}")
+
+    # Finally, anchor it to the permanent root so the EXE can find it
+    return get_asset_path(relative_path)
+
+# THE IRON ANCHOR
+PERMANENT_ROOT = get_permanent_path()
+
+# FOR WRITING (Where the actual files go when you save, anchored permanently)
+DIRECTORY_OF_SAVED_GAMES = os.path.join(PERMANENT_ROOT, "saved_games")
+DIRECTORY_OF_GENERAL_SETTINGS = os.path.join(PERMANENT_ROOT, "settings_data")
+
+
 PREFERENCES_FILE = os.path.join(DIRECTORY_OF_GENERAL_SETTINGS, "preferences.json")
 
 # The Master Clipboard (Default Values)
@@ -20,9 +64,29 @@ PREFERENCES = {
     "game_counter": 1,
     "auto_save": True,
     "starting_time": 5 * 60,
-    "game_mode": "Multiplayer",  # <--- ADD THIS
-    "player_color": "White"      # <--- ADD THIS
+    "game_mode": "Multiplayer",
+    "player_color": "White",
+    "bot_depth": 4,
+    "bot_thinking_time": 0.3,
+    "fps": 60,
+    "animation_time": 0.2,
+    "master_mute": False,
+    "music_mute": False,
+    "sfx_mute": False,
+    "volume": 0.5,
+    "sound_pack": "Default"
 }
+
+DEPTH_NAMES = {
+    1 : "Loser (1)",
+    -1 : "Alperon (??)",
+    3 : "Beginner (3)",
+    4 : "Average (4)",
+    5 : "Above Avg (5)",
+    6 : "Best I have (6)"
+}
+
+
 
 #</editor-fold>
 
@@ -55,8 +119,8 @@ RIGHT_CLICK_HIGHLIGHT_SQUARE_COLOR = (210, 43, 43)
 
 #<editor-fold desc="AI ELEMENTS"
 AGREED_GET_BEST_MOVE_THRESHOLD = 0.2
-BOT_THINKING_TIME = 0.3
-BOT_SEARCH_DEPTH = 4
+BOT_THINKING_TIME = 0.5
+BOT_SEARCH_DEPTH = 6
 #</editor-fold>
 
 #<editor-fold desc="UI ELEMENTS">
@@ -83,14 +147,140 @@ RETURN_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 30
 #<editor-fold desc="GENERAL SETTINGS">
 
 #<editor-fold desc="GENERAL SETTINGS UI">
-GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color"]
+GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color", "Bot Depth", "Bot Time"]
 GENERAL_SETTINGS_RECTS = []
 
+# ELI5: We have 6 blocks. We want them in 2 columns.
 for i in range(len(GENERAL_SETTINGS_OPTIONS)):
-    y_position = 250 + (i * 80)
-    rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, y_position, 300, 60)
+    col = i % 2
+    row = i // 2
+    x_position = (SCREEN_WIDTH // 2) - 310 + (col * 320)
+    y_position = 250 + (row * 80)
+    rect = pygame.Rect(x_position, y_position, 300, 60)
     GENERAL_SETTINGS_RECTS.append(rect)
+# </editor-fold>
 #</editor-fold>
+
+#<editor-fold desc="VIDEO SETTINGS">
+
+
+#<editor-fold desc="VIDEO SETTINGS UI">
+
+VIDEO_SETTINGS_OPTIONS = ["FPS", "Animation Time"]
+VIDEO_SETTINGS_RECTS = []
+
+for i in range(len(VIDEO_SETTINGS_OPTIONS)):
+    col = i % 2
+    row = i // 2
+    x_position = (SCREEN_WIDTH // 2) - 310 + (col * 320)
+    y_position = 250 + (row * 80)
+    rect = pygame.Rect(x_position, y_position, 300, 60)
+    VIDEO_SETTINGS_RECTS.append(rect)
+
+#</editor-fold>
+#</editor-fold>
+
+#<editor-fold desc="AUDIO">
+
+#<editor-fold desc="AUDIO PACKS">
+
+DEFAULT_AUDIO_PACK = {
+    # --- MUSIC ---
+    "menu_music": get_asset_path("assets/sounds/default/menu_music.mp3"),
+    "board_music": get_asset_path("assets/sounds/default/board_music.mp3"),
+
+    # --- SOUND EFFECTS (SFX) ---
+    "move": get_asset_path("assets/sounds/default/move.wav"),
+    "capture": get_asset_path("assets/sounds/default/capture.wav"),
+    "promote": get_asset_path("assets/sounds/default/promote.wav"),
+    "castle": get_asset_path("assets/sounds/default/castle.wav"),
+    "check": get_asset_path("assets/sounds/default/check.wav"),
+    "checkmate": get_asset_path("assets/sounds/default/checkmate.wav")
+}
+
+#</editor-fold>
+CURRENT_AUDIO_PATHS = DEFAULT_AUDIO_PACK #I will add it this way
+
+# I will also create a cache to hold the loaded sounds so I don't load them every click
+AUDIO_CACHE = {}
+CURRENT_MUSIC = None
+
+# <editor-fold desc="DJ AUDIO MANAGERS">
+
+def load_sfx(name):
+    if name not in AUDIO_CACHE:
+        try:
+            AUDIO_CACHE[name] = dj.Sound(CURRENT_AUDIO_PATHS[name])
+        except Exception as e:
+            print(f"Missing audio file: {CURRENT_AUDIO_PATHS[name]}")
+            AUDIO_CACHE[name] = None
+    return AUDIO_CACHE[name]
+
+
+def play_sfx(name):
+    # The Bouncer: Stop if muted!
+    if PREFERENCES["master_mute"] or PREFERENCES["sfx_mute"]:
+        return
+
+    sound = load_sfx(name)
+    if sound:
+        sound.set_volume(PREFERENCES["volume"])
+        sound.play()
+
+
+def play_music(name):
+    global CURRENT_MUSIC
+
+    # The Bouncer: Stop music if muted
+    if PREFERENCES["master_mute"] or PREFERENCES["music_mute"]:
+        dj.music.stop()
+        CURRENT_MUSIC = None
+        return
+
+    # Don't restart the song if it's already playing! Just update the volume.
+    if CURRENT_MUSIC == name:
+        dj.music.set_volume(PREFERENCES["volume"])
+        return
+
+    try:
+        dj.music.load(CURRENT_AUDIO_PATHS[name])
+        dj.music.set_volume(PREFERENCES["volume"])
+        dj.music.play(-1)  # -1 means loop forever
+        CURRENT_MUSIC = name
+    except Exception as e:
+        print(f"Could not play music {name}: {e}")
+        CURRENT_MUSIC = None
+
+
+def update_audio_volume():
+    """Called instantly when sliding the volume bar so you can hear it change."""
+    dj.music.set_volume(PREFERENCES["volume"])
+
+
+# </editor-fold>
+
+# <editor-fold desc="AUDIO SETTINGS UI">
+
+AUDIO_SETTINGS_OPTIONS = ["Master Mute", "Music Mute", "SFX Mute", "Sound Pack"]
+AUDIO_SETTINGS_RECTS = []
+
+# Left column (Mutes)
+for i in range(3):
+    x_pos = (SCREEN_WIDTH // 2) - 310
+    y_pos = 250 + (i * 80)
+    AUDIO_SETTINGS_RECTS.append(pygame.Rect(x_pos, y_pos, 300, 60))
+
+# Right column (Sound Pack Button)
+pack_rect = pygame.Rect((SCREEN_WIDTH // 2) + 10, 250, 300, 60)
+AUDIO_SETTINGS_RECTS.append(pack_rect)
+
+# Right column (Volume Slider Track)
+VOLUME_TRACK_RECT = pygame.Rect((SCREEN_WIDTH // 2) + 10, 330, 300, 60)
+
+# </editor-fold>
+
+#</editor-fold>
+
 
 #<editor-fold desc="SETTINGS VARIABLES">
 AUTO_SAVE = True
@@ -137,7 +327,7 @@ SAVE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, NOTATION_BTN_RECT.bottom + 10, 15
 
 # --- CLOCK RECTS ---
 # --- CLOCK RECTS (Shifted to RIGHT_MENU_X) ---
-# We put the clock slightly to the left in the 220px panel to make room for the flags
+#I put the clock slightly to the left in the 220px panel to make room for the flags
 B_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, 20, 110, 60)
 W_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, SCREEN_HEIGHT - 80, 110, 60)
 
@@ -149,8 +339,6 @@ W_FLAG_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 70, 40, 40)
 B_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, 80, 40, 40)
 W_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 120, 40, 40)
 # </editor-fold>
-
-#</editor-fold>
 
 #</editor-fold>
 
@@ -196,19 +384,15 @@ def generate_pgn(diary: list) -> str:
 
 
 def create_new_chess_file(board):
-    """Saves the current game using the number from our Preferences clipboard."""
-    # 1. Look at the clipboard for the current number
-    number_of_game = PREFERENCES["game_counter"]
+    # --- THE FIX: Don't trust the PREFERENCES counter, find the real hole! ---
+    number_of_game = get_next_available_game_number()
 
-    # 2. Generate the PGN text
     pgn = generate_pgn(board.move_log)
-
-    # 3. Create the file (e.g., game_1.txt)
-    filename = f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt"
+    filename = f"game_{number_of_game}.txt"
     create_file(filename, pgn)
 
-    # 4. Update the clipboard: Tick the number up and save the folder to disk!
-    PREFERENCES["game_counter"] += 1
+    # Sync the master counter just in case
+    PREFERENCES["game_counter"] = get_next_available_game_number()
     save_preferences()
 
 
@@ -256,39 +440,90 @@ def get_move_from_san(board, san_string: str):
 #<editor-fold desc="FILE HANDLING">
 
 def load_preferences():
-    """Opens the JSON backpack and copies the values to our global PREFERENCES dictionary."""
+    """Opens the JSON backpack from the PERMANENT folder (The Red Box)."""
     global PREFERENCES
-    # If the file exists, read it!
+
+    # 1. We ONLY check the permanent file now!
     if os.path.exists(PREFERENCES_FILE):
         try:
             with open(PREFERENCES_FILE, "r") as file:
                 loaded_data = json.load(file)
-                # Update our clipboard with whatever was in the file
                 print(loaded_data)
                 PREFERENCES.update(loaded_data)
+                print("updated")
         except json.JSONDecodeError:
             print("Preferences file corrupted. Using defaults.")
             save_preferences()
     else:
-        # If it doesn't exist yet, make one using our default clipboard!
+        # If it doesn't exist yet, make one in the permanent folder!
         save_preferences()
 
-
 def save_preferences():
-    """Takes our current PREFERENCES dictionary and photocopies it into the JSON file."""
-    # Ensure the saved_games folder actually exists first!
-    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
-        os.makedirs(DIRECTORY_OF_SAVED_GAMES)
+    """Takes our current PREFERENCES dictionary and photocopies it into the PERMANENT JSON file."""
+    # 1. RUTHLESS MENTOR FIX: I fixed your copy-paste error here.
+    # You were checking if DIRECTORY_OF_SAVED_GAMES existed before saving settings!
+    if not os.path.exists(DIRECTORY_OF_GENERAL_SETTINGS):
+        os.makedirs(DIRECTORY_OF_GENERAL_SETTINGS)
 
+    # 2. Write directly to the RED BOX file, NOT the read-only bundle!
     with open(PREFERENCES_FILE, "w") as file:
-        # Dump the dictionary into the file, indented nicely so humans can read it
         json.dump(PREFERENCES, file, indent=4)
 
+def get_next_available_game_number():
+    """Finds the lowest 'hole' in the PERMANENT saved games numbering."""
+    # Look in the RED BOX!
+    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
+        return 1
+
+    existing_numbers = set()
+    # Look in the RED BOX!
+    for filename in os.listdir(DIRECTORY_OF_SAVED_GAMES):
+        if filename.startswith("game_") and filename.endswith(".txt"):
+            try:
+                number_part = filename.replace("game_", "").replace(".txt", "")
+                existing_numbers.add(int(number_part))
+            except ValueError:
+                continue
+
+    counter = 1
+    while counter in existing_numbers:
+        counter += 1
+
+    return counter
+
+def get_saved_games_data():
+    """Reads the PERMANENT folder and returns all games sorted by number."""
+    games = []
+    # Look in the RED BOX!
+    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
+        return games
+
+    # Look in the RED BOX!
+    for filename in os.listdir(DIRECTORY_OF_SAVED_GAMES):
+        if filename.endswith(".txt") and filename.startswith("game_"):
+            # IMPORTANT: We must join the path with the RED BOX directory!
+            filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, filename)
+            pgn = get_file_content(filepath).strip()
+
+            tokens = pgn.split()
+            last_move = "None"
+            if tokens:
+                last_move = tokens[-1]
+
+            games.append({"filename": filename, "pgn": pgn, "last_move": last_move})
+
+    games.sort(key=lambda x: int(x["filename"].split("_")[1].split(".")[0]) if "_" in x["filename"] else 0)
+    return games
 
 def create_file(file_path: str, initial_text: str = ""):
     """Creates a new text file and writes the initial text. Overwrites if it exists."""
+    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
+        os.makedirs(DIRECTORY_OF_SAVED_GAMES)
+
+    full_path = os.path.join(DIRECTORY_OF_SAVED_GAMES, file_path)
+
     # "w" means Write (shred the old one, make a new one)
-    with open(file_path, "w") as file:
+    with open(full_path, "w") as file:
         file.write(initial_text)
 
 def change_file(file_path: str, new_text: str):
@@ -297,6 +532,7 @@ def change_file(file_path: str, new_text: str):
     with open(file_path, "w") as file:
         # We add \n at the end so the next thing we write goes on a new line
         file.write(new_text + "\n")
+
 def get_file_content(file_path: str) -> str:
     """Reads the entire content of a file and returns it as a string."""
     try:
@@ -307,31 +543,6 @@ def get_file_content(file_path: str) -> str:
     except FileNotFoundError:
         print(f"ERROR: The file at {file_path} was not found.")
         return ""
-
-
-def get_saved_games_data():
-    """Reads the saved_games folder and returns all games sorted by number."""
-    games = []
-    if not os.path.exists(DIRECTORY_OF_SAVED_GAMES):
-        return games
-
-    for filename in os.listdir(DIRECTORY_OF_SAVED_GAMES):
-        if filename.endswith(".txt") and filename.startswith("game_"):
-            filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, filename)
-            pgn = get_file_content(filepath).strip()
-
-            # Find the last move (the last word in the file)
-            tokens = pgn.split()
-            last_move = "None"
-            if tokens:
-                last_move = tokens[-1]
-
-            games.append({"filename": filename, "pgn": pgn, "last_move": last_move})
-
-    # Sort them by game number
-    games.sort(key=lambda x: int(x["filename"].split("_")[1].split(".")[0]) if "_" in x["filename"] else 0)
-    return games
-
 
 def is_pgn_valid(pgn_string: str) -> bool:
     """Uses the global BOARD to test if the text is a real game of chess."""
@@ -361,11 +572,10 @@ def is_pgn_valid(pgn_string: str) -> bool:
     BOARD.load_fen(STARTING_POSITION)
     return True
 
-
 def save_custom_pgn(pgn_string: str):
     """Saves a pasted PGN using the Preferences clipboard."""
     number_of_game = PREFERENCES["game_counter"]
-    filepath = f"{DIRECTORY_OF_SAVED_GAMES}/game_{number_of_game}.txt"
+    filename = f"game_{number_of_game}.txt"
 
     # Format the PGN nicely
     san_list = pgn_to_move_list(pgn_string)
@@ -380,7 +590,7 @@ def save_custom_pgn(pgn_string: str):
     final_string = " ".join(formatted_pgn)
 
     # Save the file and update the master counter
-    create_file(filepath, final_string)
+    create_file(filename, final_string)
 
     PREFERENCES["game_counter"] += 1
     save_preferences()
@@ -1386,12 +1596,13 @@ class Board:
 
 # </editor-fold>
 
-
-# </editor-fold>
-
 # <editor-fold desc="DRAWING">
 def get_image_path(color: ChessColor, piece_type: ChessPieceType):
-    return f"assets/sliced_pieces/{color.value}_{piece_type.name}.png"
+    # 1. Build the relative path string
+    relative = f"assets/sliced_pieces/{color.value}_{piece_type.name}.png"
+
+    # 2. Pass it through the 'Pathfinder' to get the real location
+    return get_asset_path(relative)
 
 def draw_home_page(screen):
     # 1. Background - Deep Slate with a faint, massive checkerboard pattern
@@ -1530,11 +1741,137 @@ def draw_general_settings_page(screen):
                 color = (180, 120, 100) if rect.collidepoint(mouse_pos) else (150, 100, 80)  # Orange
                 txt_str = f"Play as: {PREFERENCES['player_color']}"
 
+        elif btn_name == "Bot Depth":
+            color = (200, 150, 100) if rect.collidepoint(mouse_pos) else (180, 120, 80)  # Orange-Brown
+            txt_str = f"Strength: {DEPTH_NAMES[PREFERENCES['bot_depth']]}"
+
+        elif btn_name == "Bot Time":
+            color = (100, 200, 150) if rect.collidepoint(mouse_pos) else (80, 180, 120)  # Mint Green
+            txt_str = f"Bot Time: {PREFERENCES['bot_thinking_time']}s"
+
         pygame.draw.rect(screen, color, rect, border_radius=15)
         pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
 
         txt = font_btn.render(txt_str, True, (255, 255, 255))
         screen.blit(txt, txt.get_rect(center=rect.center))
+
+    # 4. Return Button
+    ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
+
+def draw_video_settings_page(screen):
+    # 1. Background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+
+    # 2. Title
+    title_surf = font_title.render("VIDEO SETTINGS", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+
+    # 3. Dynamic Loop for our 2 columns
+    for i, rect in enumerate(VIDEO_SETTINGS_RECTS):
+        btn_name = VIDEO_SETTINGS_OPTIONS[i]
+
+        if btn_name == "FPS":
+            color = (150, 100, 200) if rect.collidepoint(mouse_pos) else (120, 80, 160) # Purple
+            txt_str = f"FPS Limit: {PREFERENCES['fps']}"
+
+        elif btn_name == "Animation Time":
+            color = (200, 150, 100) if rect.collidepoint(mouse_pos) else (180, 120, 80) # Orange
+            if PREFERENCES['animation_time'] == 0.0:
+                txt_str = "Animation: Instant (0s)"
+            else:
+                txt_str = f"Animation: {PREFERENCES['animation_time']}s"
+
+        pygame.draw.rect(screen, color, rect, border_radius=15)
+        pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
+
+        txt = font_btn.render(txt_str, True, (255, 255, 255))
+        screen.blit(txt, txt.get_rect(center=rect.center))
+
+    # 4. Return Button
+    ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
+
+
+def draw_audio_settings_page(screen):
+    # 1. Background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+
+    # 2. Title
+    title_surf = font_title.render("AUDIO SETTINGS", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+
+    # 3. Dynamic Loop for Buttons
+    for i, rect in enumerate(AUDIO_SETTINGS_RECTS):
+        btn_name = AUDIO_SETTINGS_OPTIONS[i]
+
+        if btn_name == "Master Mute":
+            is_muted = PREFERENCES["master_mute"]
+            color = (80, 180, 80) if is_muted else (180, 80, 80)
+            txt_str = "Master Mute: ON" if is_muted else "Master Mute: OFF"
+
+        elif btn_name == "Music Mute":
+            is_muted = PREFERENCES["music_mute"]
+            color = (80, 180, 80) if is_muted else (180, 80, 80)
+            txt_str = "Music Mute: ON" if is_muted else "Music Mute: OFF"
+
+        elif btn_name == "SFX Mute":
+            is_muted = PREFERENCES["sfx_mute"]
+            color = (80, 180, 80) if is_muted else (180, 80, 80)
+            txt_str = "SFX Mute: ON" if is_muted else "SFX Mute: OFF"
+
+        elif btn_name == "Sound Pack":
+            color = (100, 100, 100)  # Grayed out, because we only have one!
+            txt_str = f"Pack: {PREFERENCES['sound_pack']}"
+
+        # Hover effect
+        if rect.collidepoint(mouse_pos) and btn_name != "Sound Pack":
+            color = (min(255, color[0] + 20), min(255, color[1] + 20), min(255, color[2] + 20))
+
+        pygame.draw.rect(screen, color, rect, border_radius=15)
+        pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
+        txt = font_btn.render(txt_str, True, (255, 255, 255))
+        screen.blit(txt, txt.get_rect(center=rect.center))
+
+    # --- THE VOLUME SLIDER ---
+    # Draw the empty dark track
+    pygame.draw.rect(screen, (50, 50, 50), VOLUME_TRACK_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), VOLUME_TRACK_RECT, 3, border_radius=15)
+
+    # Calculate and draw the blue fill
+    vol = PREFERENCES["volume"]
+    fill_width = int((VOLUME_TRACK_RECT.width - 6) * vol)  # -6 accounts for the border thickness
+    if fill_width > 0:
+        fill_rect = pygame.Rect(VOLUME_TRACK_RECT.x + 3, VOLUME_TRACK_RECT.y + 3, fill_width,
+                                VOLUME_TRACK_RECT.height - 6)
+        pygame.draw.rect(screen, (80, 150, 200), fill_rect, border_radius=12)
+
+    vol_txt = font_btn.render(f"Volume: {int(vol * 100)}%", True, (255, 255, 255))
+    screen.blit(vol_txt, vol_txt.get_rect(center=VOLUME_TRACK_RECT.center))
 
     # 4. Return Button
     ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
@@ -2323,14 +2660,211 @@ def get_random_bot_move(board, ai_color: ChessColor): #PLACEHOLDER
     return chosen_move
 
 
-def get_bot_move(board, ai_color:ChessColor):
-    import chess_engine
-    chess_engine.initialize_engine(ChessColor, ChessPieceType)
-    return chess_engine.ai_get_best_move(board, ai_color,search_depth=BOT_SEARCH_DEPTH)
+def get_alperon_move(board, ai_color: ChessColor):
+    """The Toddler Brain: Grabs the shiniest piece on the board and ignores the consequences."""
+    best_move = None
+    current_fen = board.generate_fen()
+    short_fen = current_fen.split()[0]
+
+    # Look for the current board in our book
+    print("short=",short_fen)
+    print(openings.ALPERON_VARIATION)
+    if short_fen in openings.ALPERON_VARIATION:
+        print("got here")
+        move_str = openings.get_alperon_variation(current_fen)
+        from_not = move_str[:2]  # "e7"
+        to_not = move_str[2:]  # "e5"
+
+        # Convert notation to actual board positions
+        from_pos = SquarePosition(notation=from_not)
+        to_pos = SquarePosition(notation=to_not)
+
+        # Find the piece and the move object
+        piece = board.get_piece_at(from_pos)
+        if piece and to_pos in piece.legal_moves:
+            print(f"Bot using Opening Book: {move_str}")
+            return piece.legal_moves[to_pos]
+    # We start at -1 so that even a "0 point" move (a normal move with no capture)
+    # looks good if there is absolutely nothing to eat.
+    max_snack_value = -1
+
+    all_possible_moves = []
+
+    # A quick cheat sheet for the toddler to know what tastes best
+    piece_values = {
+        "P": 100,
+        "N": 320,
+        "B": 330,
+        "R": 500,
+        "Q": 900,
+        "K": 20000
+    }
+
+    # 1. Walk through the whole board and look at our pieces
+    for piece in board.get_all_pieces():
+        if piece.color == ai_color:
+
+            # 2. Look at every single move this piece can make
+            for target_pos, move in piece.legal_moves.items():
+                all_possible_moves.append(move)
+
+                # Assume this move gives us 0 points to start
+                current_move_value = 0
+
+                # --- THE GREEDY CHECK ---
+
+                # A. Does this move eat somebody?
+                if move.victim_pos:
+                    victim = board.get_piece_at(move.victim_pos)
+                    if victim:
+                        # Look up the victim's letter ('Q', 'R', etc.) to get its score
+                        current_move_value = piece_values.get(victim.type.value, 0)
+
+                # B. Does this move turn a Pawn into a Queen?
+                if move.move_type == MoveType.PROMOTION:
+                    current_move_value += 800  # A pawn (100) becomes a Queen (900), gaining 800 points!
+
+                # C. Is this the biggest reward we have seen so far?
+                # We use > instead of >= so it naturally picks the *first* best move it finds
+                if current_move_value > max_snack_value:
+                    max_snack_value = current_move_value
+                    best_move = move
+
+    # 3. If everything is equal (like at the very start of the game where no captures exist),
+    # the greedy bot gets confused. Let's just have it pick a random move so the game doesn't freeze.
+    if max_snack_value == 0 and all_possible_moves:
+        best_move = random.choice(all_possible_moves)
+
+    # 4. If it's a promotion, always take the Queen! (Maximum greed)
+    if best_move and best_move.move_type == MoveType.PROMOTION:
+        best_move.promotion_choice = ChessPieceType.QUEEN
+
+    return best_move
+
+
+def get_bot_move(board, ai_color:ChessColor,depth):
+    if depth == -1:
+        return get_alperon_move(board, ai_color)
+    elif depth == 1:
+        return get_random_bot_move(board,ai_color)
+    return bot.ai_get_best_move_cpp(board, ai_color, depth=depth)
 
 #</editor-fold>
 
-# <editor-fold desc="MAIN MENU">
+# <editor-fold desc="RUN MAIN MENU">
+
+#<editor-fold desc="CLASS SIGNAL">
+class MenuSignal(Enum):
+    CONTINUE = 0
+    BACK = 1
+    QUIT = 2
+    START_GAME = 3
+#</editor-fold>
+
+def quit_game():
+    if PREFERENCES: save_preferences()
+    pygame.quit()
+    sys.exit()
+
+
+def run_audio_settings_screen():
+    global SCREEN, FPS
+    pygame_clock = pygame.time.Clock()
+    is_dragging_slider = False
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+            # --- MOUSE DOWN ---
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if RETURN_BTN_RECT.collidepoint(event.pos):
+                    return MenuSignal.BACK
+
+                # Check Buttons
+                for i, rect in enumerate(AUDIO_SETTINGS_RECTS):
+                    if rect.collidepoint(event.pos):
+                        btn_name = AUDIO_SETTINGS_OPTIONS[i]
+
+                        if btn_name == "Master Mute":
+                            PREFERENCES["master_mute"] = not PREFERENCES["master_mute"]
+                            play_music(CURRENT_MUSIC)  # Instantly mute/unmute
+                        elif btn_name == "Music Mute":
+                            PREFERENCES["music_mute"] = not PREFERENCES["music_mute"]
+                            play_music(CURRENT_MUSIC)
+                        elif btn_name == "SFX Mute":
+                            PREFERENCES["sfx_mute"] = not PREFERENCES["sfx_mute"]
+
+                        save_preferences()
+
+                # Check Slider Grab
+                if VOLUME_TRACK_RECT.collidepoint(event.pos):
+                    is_dragging_slider = True
+
+            # --- MOUSE UP ---
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                if is_dragging_slider:
+                    is_dragging_slider = False
+                    save_preferences()
+
+            # --- MOUSE MOTION (The Drag) ---
+            if event.type == pygame.MOUSEMOTION:
+                if is_dragging_slider:
+                    # ELI5: How far into the track is the mouse? Divide by total width to get %.
+                    relative_x = event.pos[0] - VOLUME_TRACK_RECT.x
+
+                    # Clamp it so they can't drag it to -500% or 2000%
+                    new_vol = max(0.0, min(1.0, relative_x / VOLUME_TRACK_RECT.width))
+
+                    PREFERENCES["volume"] = new_vol
+                    update_audio_volume()  # Apply instantly to the DJ!
+
+        draw_audio_settings_page(SCREEN)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
+def run_video_settings_screen():
+    global SCREEN, FPS, DT  # We MUST bring these in to change the game's heartbeat!
+    pygame_clock = pygame.time.Clock()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # 1. Return Button
+                if RETURN_BTN_RECT.collidepoint(event.pos):
+                    return
+
+                # 2. Dynamic Settings Buttons
+                for i, rect in enumerate(VIDEO_SETTINGS_RECTS):
+                    if rect.collidepoint(event.pos):
+                        btn_name = VIDEO_SETTINGS_OPTIONS[i]
+
+                        if btn_name == "FPS":
+                            fps_list = [30, 60, 120, 144]
+                            curr = PREFERENCES["fps"]
+                            idx = fps_list.index(curr) if curr in fps_list else 1
+                            new_fps = fps_list[(idx + 1) % len(fps_list)]
+
+                            PREFERENCES["fps"] = new_fps
+                            # Update the actual engine speed!
+                            FPS = new_fps
+                            DT = 1 / FPS
+                            save_preferences()
+
+                        elif btn_name == "Animation Time":
+                            times = [0.0, 0.1, 0.2, 0.3, 0.5]
+                            curr = PREFERENCES["animation_time"]
+                            idx = times.index(curr) if curr in times else 2
+                            PREFERENCES["animation_time"] = times[(idx + 1) % len(times)]
+                            save_preferences()
+
+        draw_video_settings_page(SCREEN)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
 
 def run_general_settings_screen():
     # We must call in STARTING_TIME as global so we can actually change it!
@@ -2340,8 +2874,7 @@ def run_general_settings_screen():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                return MenuSignal.QUIT
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # 1. Return Button
@@ -2355,18 +2888,25 @@ def run_general_settings_screen():
 
                         if btn_name == "Auto Save":
                             PREFERENCES["auto_save"] = not PREFERENCES["auto_save"]
-                            save_preferences()  # Save instantly!
 
                         elif btn_name == "Time Control":
                             times = [60, 180, 300, 600, 1800]
                             curr = PREFERENCES["starting_time"]
+                            # Cycle to next time
+                            idx = times.index(curr) if curr in times else 2
+                            PREFERENCES["starting_time"] = times[(idx + 1) % len(times)]
+
+                            # Update the actual game clocks
+                            for color in [ChessColor.WHITE, ChessColor.BLACK]:
+                                CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
 
                         elif btn_name == "Game Mode":
                             if PREFERENCES["game_mode"] == "Multiplayer":
                                 PREFERENCES["game_mode"] = "Singleplayer"
                             else:
                                 PREFERENCES["game_mode"] = "Multiplayer"
-                            save_preferences()
+                            print(PREFERENCES["game_mode"])
+
 
                         elif btn_name == "Player Color":
                             if PREFERENCES["game_mode"] == "Singleplayer":
@@ -2374,18 +2914,25 @@ def run_general_settings_screen():
                                     PREFERENCES["player_color"] = "Black"
                                 else:
                                     PREFERENCES["player_color"] = "White"
-                                save_preferences()
 
-                            # Cycle to next time
-                            # idx = times.index(curr) if curr in times else 2
-                            # PREFERENCES["starting_time"] = times[(idx + 1) % len(times)]
 
-                            # Update the actual game clocks
-                            for color in [ChessColor.WHITE, ChessColor.BLACK]:
-                                CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
 
-                            save_preferences()  # Save instantly!
 
+
+
+                        elif btn_name == "Bot Depth":
+                            depths = [1,-1 #Alperon
+                                ,3,4,5,6]
+                            curr = PREFERENCES["bot_depth"]
+                            idx = depths.index(curr) if curr in depths else 2
+                            PREFERENCES["bot_depth"] = depths[(idx + 1) % len(depths)]
+
+                        elif btn_name == "Bot Time":
+                            times = [0.1,0.3, 0.5, 1.0,2.0]
+                            curr = PREFERENCES["bot_thinking_time"]
+                            idx = times.index(curr) if curr in times else 1
+                            PREFERENCES["bot_thinking_time"] = times[(idx + 1) % len(times)]
+                        save_preferences()
         draw_general_settings_page(SCREEN)
         pygame.display.flip()
         pygame_clock.tick(FPS)
@@ -2415,8 +2962,7 @@ def run_replay_screen(pgn_string: str):
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                return MenuSignal.QUIT
 
             # --- KEYBOARD SHORTCUTS ---
             if event.type == pygame.KEYDOWN:
@@ -2440,7 +2986,7 @@ def run_replay_screen(pgn_string: str):
 
                     # 2. Button Intercepts
                     if REPLAY_MENU_BTN.collidepoint(event.pos):
-                        return  # Exit the room!
+                        return MenuSignal.BACK
 
                     elif REPLAY_NOTATION_BTN.collidepoint(event.pos):
                         show_notation = not show_notation
@@ -2523,8 +3069,7 @@ def run_paste_pgn_screen():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                return MenuSignal.QUIT
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # 1. Return
@@ -2583,8 +3128,7 @@ def run_saved_games_screen():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                return MenuSignal.QUIT
 
             # --- THE SCROLL WHEEL ---
             if event.type == pygame.MOUSEWHEEL:
@@ -2595,14 +3139,17 @@ def run_saved_games_screen():
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # 1. Return Button
                 if return_rect.collidepoint(event.pos):
-                    return
+                    return MenuSignal.BACK
                 # NEW IMPORT DOOR
                 if import_rect.collidepoint(event.pos):
-                    run_paste_pgn_screen()
+                    result = run_paste_pgn_screen()
                     # We must refresh the Librarian when we get back so the new game shows up!
                     games = get_saved_games_data()
                     total_content_height = len(games) * card_height
                     max_scroll = max(0, total_content_height - window_pane_height + 20)
+
+                    if result == MenuSignal.QUIT:
+                        return MenuSignal.QUIT
 
                 # 2. Check game buttons IF click is inside the window pane
                 if clip_rect.collidepoint(event.pos):
@@ -2616,7 +3163,10 @@ def run_saved_games_screen():
                         delete_rect = pygame.Rect(main_rect.right - 80, y + 17, 70, 40)
 
                         if show_rect.collidepoint(event.pos):
-                            run_replay_screen(game['pgn'])
+                            result = run_replay_screen(game['pgn'])
+                            if result == MenuSignal.QUIT:
+                                return MenuSignal.QUIT
+
                         elif copy_rect.collidepoint(event.pos):
                             pygame.scrap.init()
                             pygame.scrap.put(pygame.SCRAP_TEXT, game['pgn'].encode('utf-8'))
@@ -2628,10 +3178,10 @@ def run_saved_games_screen():
                             filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, game['filename'])
                             if os.path.exists(filepath):
                                 print(filepath)
-                                game_number = int("".join([c if c.isdigit() else "" for c in filepath]))
-                                PREFERENCES['game_counter'] = game_number
                                 save_preferences()
                                 os.remove(filepath)
+                                game_number = get_next_available_game_number()
+                                PREFERENCES['game_counter'] = game_number
                                 print(f"Deleted {game['filename']}")
 
                             # 2. Tell the Librarian to refresh the list!
@@ -2652,29 +3202,35 @@ def run_settings_screen():
     global SCREEN
     """The Settings Room. You stay here until you click Return to Menu."""
     pygame_clock = pygame.time.Clock()
+    result = None
 
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                return MenuSignal.QUIT
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-
                 # Check all the dynamic buttons in one simple loop!
                 for i, rect in enumerate(SETTINGS_RECTS):
                     if rect.collidepoint(event.pos):
                         btn_name = SETTINGS_OPTIONS[i][0]
                         if btn_name == "Saved Games":
-                            run_saved_games_screen()
+                            result = run_saved_games_screen()
                         elif btn_name == "General Settings":
-                            run_general_settings_screen()
+                            result = run_general_settings_screen()
+                        elif btn_name == "Video Settings":
+                            result = run_video_settings_screen()
+                        elif btn_name == "Audio Settings":
+                            result = run_audio_settings_screen()
                         else:
                             print(f"TODO: Open menu for {btn_name}")
+                        if result == MenuSignal.QUIT:
+                            return MenuSignal.QUIT
 
                 # Check the Return button
                 if RETURN_BTN_RECT.collidepoint(event.pos):
-                    return  # Break the loop! This teleports us back to the Home Screen.
+                    return MenuSignal.BACK
+
 
         draw_settings_page(SCREEN)
         pygame.display.flip()
@@ -2688,71 +3244,102 @@ def run_home_screen():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                return "QUIT"
+                return MenuSignal.QUIT
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if START_BTN_RECT.collidepoint(event.pos):
-                    return "START"  # Break the loop and return to main!
+                    return MenuSignal.START_GAME
                 elif QUIT_BTN_RECT.collidepoint(event.pos):
-                    return "QUIT"
+                    return MenuSignal.QUIT
                 elif SETTINGS_BTN_RECT.collidepoint(event.pos):
-                    run_settings_screen()
+                    result = run_settings_screen()
+                    if result == MenuSignal.QUIT:
+                        return MenuSignal.QUIT
 
         draw_home_page(SCREEN)
         pygame.display.flip()
         pygame_clock.tick(FPS)
-# </editor-fold>
+
+#</editor-fold>
 
 # <editor-fold desc="MAIN">
 
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS,NOTATION_FONT
+    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT
 
     load_preferences()
     pygame.init()
+    dj.init()
+    bot.innit(chessColor=ChessColor, chessPieceType=ChessPieceType,
+              move=Move, moveType=MoveType, squarePosition=SquarePosition)
 
     NOTATION_FONT = pygame.font.SysFont("Arial", 14, bold=True)
 
-    SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED|pygame.RESIZABLE)
+    SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED | pygame.RESIZABLE)
     pygame.display.set_caption("Chess")
-
-
-    home_screen_action = run_home_screen()
-    if home_screen_action == "QUIT":
-        pygame.quit()
-        sys.exit()
-
+    FPS = PREFERENCES['fps']
+    DT = 1/FPS
 
     pygame_clock = pygame.time.Clock()
     BOARD.load_fen(STARTING_POSITION)
     IMAGE_CACHE = {}
 
+    # ==========================================
+    # 1. THE ANIMATION STATE
+    # ==========================================
+    animation_state = {
+        "piece": None,  # Which piece is flying?
+        "start_pos": None,  # (x, y) pixels
+        "end_pos": None,  # (x, y) pixels
+        "progress": 0.0  # 0.0 to 1.0
+    }
 
+    def animate_move(piece, from_sq, to_sq):
+        """Sets up the ghost piece for the journey."""
+        nonlocal animation_state
+        if PREFERENCES["animation_time"] <= 0:
+            return  # Skip if user wants instant teleportation
 
+        # Snap any existing animation to the end so they don't overlap
+        if animation_state["piece"] is not None:
+            animation_state["progress"] = 1.0
+
+        # Calculate pixel centers for the start and end
+        start_x = BOARD_X_OFFSET + (from_sq.col * SQUARE_SIZE + SQUARE_SIZE // 2)
+        start_y = from_sq.row * SQUARE_SIZE + SQUARE_SIZE // 2
+        end_x = BOARD_X_OFFSET + (to_sq.col * SQUARE_SIZE + SQUARE_SIZE // 2)
+        end_y = to_sq.row * SQUARE_SIZE + SQUARE_SIZE // 2
+
+        animation_state.update({
+            "piece": piece,
+            "start_pos": (start_x, start_y),
+            "end_pos": (end_x, end_y),
+            "progress": 0.0
+        })
+
+    # ==========================================
+    # 2. STATE VARIABLES
+    # ==========================================
     picking_piece: ChessPiece | None = None
     is_dragging = False
-
-    # THE STATE MACHINE TRIGGER
     promotion_pending: Move | None = None
     promotion_rects = []
-
-    # ARROW MEMORY
     drawn_arrows = set()
     highlighted_squares = set()
     right_click_start = None
-
     game_over_btn_rect = None
     show_notation = False
     is_fullscreen = False
     has_auto_saved = False
+    ai_thinking_timer = 0  # Defined up here so nonlocal can see it!
+
 
     # ==========================================
-    # THE CLEANUP CREW
+    # 3. THE CLEANUP CREW
     # ==========================================
     def reset_match():
-        nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused,has_auto_saved
+        nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused, has_auto_saved, ai_thinking_timer, animation_state,ai_color
 
-        # 1. Cure the players and the board
         PLAYERS[ChessColor.WHITE].lost = False
         PLAYERS[ChessColor.BLACK].lost = False
         BOARD.is_draw = False
@@ -2760,54 +3347,71 @@ def main():
         BOARD.is_stalemate = False
         BOARD.load_fen(STARTING_POSITION)
 
-        # 2. Wipe the whiteboards
         drawn_arrows.clear()
         highlighted_squares.clear()
 
-        # 3. Drop any pieces we were holding
         picking_piece = None
         is_dragging = False
         promotion_pending = None
         game_over_btn_rect = None
         is_paused = False
-
-        #only relevent if autosave is true
         has_auto_saved = False
-
         ai_thinking_timer = 0
 
-        # 4. Reset the clocks
+        # Kill the ghost piece if we reset mid-flight!
+        animation_state["piece"] = None
+
         for clock in CLOCKS.values():
             clock.reset()
 
         CLOCKS[BOARD.active_color].start()
         CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
-    def undo_move():
-        nonlocal drawn_arrows,highlighted_squares,picking_piece,is_dragging,promotion_pending
 
+        if PREFERENCES["game_mode"] == "Singleplayer":
+            ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
+        else: ai_color = None
+
+
+    def undo_move():
+        nonlocal drawn_arrows, highlighted_squares, picking_piece, is_dragging, promotion_pending, ai_thinking_timer
+
+        # ANIMATION HOOK: We look at the diary before tearing out the page!
+        if len(BOARD.move_log) > 0:
+            last_record = BOARD.move_log[-1]
+            move = last_record.move
+            piece = last_record.moved_piece
+            # Fly from the destination backwards to the start!
+            animate_move(piece, move.to_pos, move.from_pos)
+
+        # Now actually reverse the math
         BOARD.undo_move()
+
         drawn_arrows.clear()
         highlighted_squares.clear()
         picking_piece = None
         is_dragging = False
         promotion_pending = None
-
         ai_thinking_timer = 0
 
-    # --- THE CRITICAL SYNC ---
-    # Tell the clocks: "I know you were born with 5 mins, but the file says 10!"
+    # ==========================================
+    # 4. THE CRITICAL SYNC
+    # ==========================================
     for color in [ChessColor.WHITE, ChessColor.BLACK]:
         CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
 
     CLOCKS[BOARD.active_color].start()
 
     ai_color = None
-    if PREFERENCES["game_mode"] == "Singleplayer":
-        ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
-    ai_thinking_timer = 0
+    reset_match()
+
 
     is_paused = False
     running = True
+
+    home_screen_action = run_home_screen()
+    if home_screen_action == MenuSignal.QUIT:
+        running = False
+
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -2894,9 +3498,9 @@ def main():
                         action = run_home_screen()
 
                         # 3. Did they quit, or hit Start?
-                        if action == "QUIT":
+                        if action == MenuSignal.QUIT:
                             running = False
-                        elif action == "START":
+                        elif action == MenuSignal.START_GAME:
                             reset_match()  # Clean the board for the new game!
                         continue
 
@@ -2945,8 +3549,11 @@ def main():
 
                     # 2. Hybrid Click-to-Move (if they clicked an empty square or enemy without dragging)
                     elif picking_piece is not None:
+
                         if picking_piece.is_valid_move(clicked):
                             move = picking_piece.legal_moves[clicked]
+                            # THE HOOK: Fly the ghost!
+                            animate_move(picking_piece, move.from_pos, move.to_pos)
                             if move.move_type == MoveType.PROMOTION:
                                 promotion_pending = move
                             else:
@@ -3011,30 +3618,49 @@ def main():
             if not CLOCKS[BOARD.active_color]:
                 PLAYERS[BOARD.active_color].lost = True
 
+
+        # ==========================================
+        # UPDATE ANIMATION PROGRESS
+        # ==========================================
+        if animation_state["piece"]:
+            # Progress goes from 0.0 to 1.0 based on Delta Time and your settings
+            animation_state["progress"] += DT / PREFERENCES["animation_time"]
+            if animation_state["progress"] >= 1.0:
+                animation_state["piece"] = None  # Trip finished! Ghost disappears.
+
         # --- DRAWING PHASE ---
         SCREEN.fill((0, 0, 0))
 
-        # Draw the Right Room
+        # Draw the Rooms
         draw_side_menu(SCREEN, show_notation, is_paused)
-
-        # Draw the Left Room
         draw_live_diary(SCREEN, BOARD.move_log)
-
-        # Draw the Center Room
         draw_board(SCREEN, show_notation)
 
-        dragged_piece = picking_piece if is_dragging else None
-        draw_pieces(SCREEN, BOARD, IMAGE_CACHE, dragged_piece)
+        # THE MAGIC TRICK: Hide the piece if we are dragging it OR animating it!
+        hidden_piece = picking_piece if is_dragging else animation_state["piece"]
+        draw_pieces(SCREEN, BOARD, IMAGE_CACHE, dragged_piece=hidden_piece)
 
-        # Draw all pieces EXCEPT the one being dragged
-        dragged_piece = picking_piece if is_dragging else None
-        draw_pieces(SCREEN, BOARD, IMAGE_CACHE, dragged_piece)
-
-        # Draw the "Ghost Piece" directly on the mouse cursor
+        # --- DRAW THE GHOSTS (The Special Effects!) ---
+        # 1. Are we dragging? (Draw it on the mouse)
         if is_dragging and picking_piece is not None:
             img = get_piece_image(picking_piece, IMAGE_CACHE)
             mouse_x, mouse_y = pygame.mouse.get_pos()
             rect = img.get_rect(center=(mouse_x, mouse_y))
+            SCREEN.blit(img, rect)
+
+        # 2. Are we animating? (Draw it sliding across the board)
+        elif animation_state["piece"]:
+            p = animation_state["piece"]
+            prog = animation_state["progress"]
+            s = animation_state["start_pos"]
+            e = animation_state["end_pos"]
+
+            # LERP MATH: Start + (Distance * Percentage)
+            curr_x = s[0] + (e[0] - s[0]) * prog
+            curr_y = s[1] + (e[1] - s[1]) * prog
+
+            img = get_piece_image(p, IMAGE_CACHE)
+            rect = img.get_rect(center=(curr_x, curr_y))
             SCREEN.blit(img, rect)
 
         # Draw the highlights that a piece needs.
@@ -3087,10 +3713,14 @@ def main():
 
                 ai_thinking_timer += DT
 
-                # 2. Has the AI thought for long enough? (Let's say 0.5 seconds)
-                if ai_thinking_timer >= BOT_THINKING_TIME:
-                    ai_move = get_bot_move(BOARD, ai_color)
+                # 2. Has the AI thought for long enough?
+                if ai_thinking_timer >= PREFERENCES['bot_thinking_time']:
+                    ai_move = get_bot_move(BOARD, ai_color, PREFERENCES['bot_depth'])
                     if ai_move:
+                        # THE HOOK: Grab the piece and tell it to fly!
+                        moving_piece = BOARD.get_piece_at(ai_move.from_pos)
+                        animate_move(moving_piece, ai_move.from_pos, ai_move.to_pos)
+
                         BOARD.execute_move(ai_move)
 
                     # 3. Reset the stopwatch for the next turn
@@ -3101,8 +3731,7 @@ def main():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
-    pygame.quit()
-    sys.exit()
+    quit_game()
 
 
 if __name__ == "__main__":

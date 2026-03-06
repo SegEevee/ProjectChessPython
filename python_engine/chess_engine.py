@@ -564,30 +564,92 @@ def shadow_search_pvs(board: ShadowBoard, depth, alpha, beta, color):
         _tt_store(board.zobrist, depth, flag, value, best_move)
         return value
 
+def _square_to_idx(row: int, col: int) -> int:
+    return row * 8 + col
 
-def ai_get_best_move(board, ai_color, search_depth=4):
+def move_to_shadow_tuple(move):
     """
-    Root: still uses your real board for move generation,
-    but evaluates each move using ONE ShadowBoard that we update via sync once per move.
-    Next patch will convert root to pure shadow moves (no resync per root).
+    Convert your Move object into (from_idx, to_idx, is_promotion)
+    using your exact Move definition:
+      - move.from_pos : SquarePosition
+      - move.to_pos   : SquarePosition
+      - SquarePosition has .row and .col (as used elsewhere in your codebase)
+    """
+    is_prom = (move.move_type == MoveType.PROMOTION)
+
+    fp = move.from_pos
+    tp = move.to_pos
+
+    # If your SquarePosition stores row/col:
+    from_idx = fp.row * 8 + fp.col
+    to_idx   = tp.row * 8 + tp.col
+
+    return from_idx, to_idx, is_prom
+
+
+
+def generate_real_moves(board, ai_color):
+    """
+    Your old root generator, unchanged.
+    Returns a list of real Move objects.
     """
     moves = []
     for piece in board.get_all_pieces():
         if piece.color == ai_color:
             for move in piece.legal_moves.values():
                 moves.append(move)
-    if not moves:
+    return moves
+
+
+def ai_get_best_move(board, ai_color, search_depth=4):
+    """
+    Root: sync ONCE into ShadowBoard, then use execute/undo for everything.
+    """
+    # 1) Generate real moves once (for returning the best Move object)
+    real_moves = generate_real_moves(board, ai_color)
+    if not real_moves:
         return None
+
+    # If your Move object needs promotion choice set, do it once here
+    for m in real_moves:
+        if getattr(m, "move_type", None) == MoveType.PROMOTION:
+            # Your code expects this field exists
+            m.promotion_choice = ChessPieceType.QUEEN
+
+    # 2) Convert to shadow moves once (parallel arrays so we can return the real Move)
+    shadow_moves = []
+    for m in real_moves:
+        shadow_moves.append(move_to_shadow_tuple(m))
 
     enemy_color = ChessColor.BLACK if ai_color == ChessColor.WHITE else ChessColor.WHITE
 
-    best_move = None
+    # 3) Build ShadowBoard ONCE from the real board, with correct side-to-move
+    shadow = ShadowBoard(board, side_to_move=ai_color)
+
+    best_real = None
+    best_shadow = None
     best_score = -INF if ai_color == ChessColor.WHITE else INF
 
-    # Iterative deepening
-    shadow = ShadowBoard()
+    # Optional: if you want TT move ordering at root too
+    def bring_tt_best_first(shadow_moves, real_moves):
+        entry = TRANSPOSITION_TABLE.get(shadow.zobrist)
+        if not entry:
+            return
+        tt_best = entry[3]  # stored as (from,to,is_prom)
+        if tt_best is None:
+            return
+        for j in range(len(shadow_moves)):
+            if shadow_moves[j][0] == tt_best[0] and shadow_moves[j][1] == tt_best[1] and shadow_moves[j][2] == tt_best[2]:
+                shadow_moves[0], shadow_moves[j] = shadow_moves[j], shadow_moves[0]
+                real_moves[0], real_moves[j] = real_moves[j], real_moves[0]
+                break
+
+    # Root ordering: TT best first (cheap win)
+    bring_tt_best_first(shadow_moves, real_moves)
+
+    # 4) Iterative deepening with aspiration windows (same concept as you had)
     for current_depth in range(1, search_depth + 1):
-        # Aspiration window around last best score (simple)
+
         if current_depth == 1:
             window_alpha, window_beta = -INF, INF
         else:
@@ -595,45 +657,64 @@ def ai_get_best_move(board, ai_color, search_depth=4):
             window_alpha = best_score - margin
             window_beta = best_score + margin
 
-        # If aspiration fails, we widen
-        def search_with_window(a, b):
-            nonlocal best_move, best_score
-            local_best = None
+        def root_search_with_window(a, b):
+            nonlocal best_real, best_shadow, best_score
+
             local_best_score = -INF if ai_color == ChessColor.WHITE else INF
+            local_best_real = None
+            local_best_shadow = None
 
-            for move in moves:
-                if move.move_type == MoveType.PROMOTION:
-                    move.promotion_choice = ChessPieceType.QUEEN
+            for real_m, sh_m in zip(real_moves, shadow_moves):
+                # execute on shadow
+                undo_info = shadow.execute(sh_m)
 
-                board.execute_move(move, is_imagining=True)
-                shadow.sync_from_real(board)
-                shadow.side_to_move = enemy_color
-                shadow.zobrist ^= ZOBRIST_SIDE_TO_MOVE  # because side_to_move differs after move
+                # Now it is enemy to move (execute flips side + zobrist)
+                score = shadow_search_pvs(
+                    shadow,
+                    current_depth - 1,
+                    a,
+                    b,
+                    enemy_color
+                )
 
-                score = shadow_search_pvs(shadow, current_depth - 1, a, b, enemy_color)
-
-                board.undo_move()
+                # undo
+                shadow.undo(sh_m, undo_info)
 
                 if ai_color == ChessColor.WHITE:
                     if score > local_best_score:
                         local_best_score = score
-                        local_best = move
+                        local_best_real = real_m
+                        local_best_shadow = sh_m
                 else:
                     if score < local_best_score:
                         local_best_score = score
-                        local_best = move
+                        local_best_real = real_m
+                        local_best_shadow = sh_m
 
-            best_move = local_best
+            best_real = local_best_real
+            best_shadow = local_best_shadow
             best_score = local_best_score
 
-        search_with_window(window_alpha, window_beta)
+        # Try aspiration window
+        root_search_with_window(window_alpha, window_beta)
 
-        # Aspiration fail: widen
-        if ai_color == ChessColor.WHITE:
-            if best_score <= window_alpha or best_score >= window_beta:
-                search_with_window(-INF, INF)
-        else:
-            if best_score <= window_alpha or best_score >= window_beta:
-                search_with_window(-INF, INF)
+        # Fail-high / fail-low -> widen
+        if best_score <= window_alpha or best_score >= window_beta:
+            root_search_with_window(-INF, INF)
 
-    return best_move
+        # If you want: store the root best move into TT at this root position
+        # (not strictly necessary; your deeper TT stores will happen anyway)
+        # _tt_store(shadow.zobrist, current_depth, EXACT, best_score, best_shadow)
+
+    return best_real
+
+
+
+
+
+
+
+
+
+
+
