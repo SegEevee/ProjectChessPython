@@ -7,8 +7,6 @@ import json
 import re
 import random
 from enum import Enum
-
-
 from side_scripts import opening_books as openings
 from side_scripts import python_glue as bot
 
@@ -204,6 +202,8 @@ CURRENT_AUDIO_PATHS = DEFAULT_AUDIO_PACK #I will add it this way
 # I will also create a cache to hold the loaded sounds so I don't load them every click
 AUDIO_CACHE = {}
 CURRENT_MUSIC = None
+LAST_REQUESTED_MUSIC = "menu_music"
+SFX_VOLUME_ADJUSTMENT = 2.0 #so the sfx will actually be heard in the game
 
 # <editor-fold desc="DJ AUDIO MANAGERS">
 
@@ -224,20 +224,22 @@ def play_sfx(name):
 
     sound = load_sfx(name)
     if sound:
-        sound.set_volume(PREFERENCES["volume"])
+        sound.set_volume(PREFERENCES["volume"] * SFX_VOLUME_ADJUSTMENT)
         sound.play()
 
-
 def play_music(name):
-    global CURRENT_MUSIC
+    global CURRENT_MUSIC, LAST_REQUESTED_MUSIC
 
-    # The Bouncer: Stop music if muted
+    # 1. Write the requested song on the sticky note BEFORE checking mutes
+    LAST_REQUESTED_MUSIC = name
+
+    # 2. The Bouncer: Stop music if muted
     if PREFERENCES["master_mute"] or PREFERENCES["music_mute"]:
         dj.music.stop()
         CURRENT_MUSIC = None
         return
 
-    # Don't restart the song if it's already playing! Just update the volume.
+    # 3. Don't restart the song if it's already playing! Just update the volume.
     if CURRENT_MUSIC == name:
         dj.music.set_volume(PREFERENCES["volume"])
         return
@@ -247,10 +249,10 @@ def play_music(name):
         dj.music.set_volume(PREFERENCES["volume"])
         dj.music.play(-1)  # -1 means loop forever
         CURRENT_MUSIC = name
+        print(f"done playing music {name}")
     except Exception as e:
         print(f"Could not play music {name}: {e}")
         CURRENT_MUSIC = None
-
 
 def update_audio_volume():
     """Called instantly when sliding the volume bar so you can hear it change."""
@@ -261,7 +263,7 @@ def update_audio_volume():
 
 # <editor-fold desc="AUDIO SETTINGS UI">
 
-AUDIO_SETTINGS_OPTIONS = ["Master Mute", "Music Mute", "SFX Mute", "Sound Pack"]
+AUDIO_SETTINGS_OPTIONS = ["Master Playing", "Music Playing", "SFX Playing", "Sound Pack"]
 AUDIO_SETTINGS_RECTS = []
 
 # Left column (Mutes)
@@ -755,18 +757,19 @@ def can_castle(board, king, rook):
     for pos in between_squares:
         if board.grid[pos.row][pos.col] is not None:
             return False
-
     player = PLAYERS[king.color]
     enemy_player = PLAYERS[OTHER_COLOR[king.color]]
 
     if player.is_in_check:
         return False
 
+
     direction = 1 if rook.position.col > king.position.col else -1
     for i in range(1, 3):
         test_pos = SquarePosition(row=king.position.row, col=king.position.col + (i * direction))
         if enemy_player.is_controlling_square(test_pos):
             return False
+
 
     return True
 
@@ -1020,7 +1023,7 @@ class MoveRecord:
     """A single page in the Diary, holding a photograph of the past."""
 
     def __init__(self, move: Move, moved_piece, piece_had_moved: bool, victim_piece, clocks, old_en_passant,
-                 old_castling_rights, algebraic_notation, is_imagining=False):
+                 old_castling_rights, algebraic_notation, old_halfmove_clock, is_imagining=False):
         self.move = move
         self.moved_piece = moved_piece
         self.piece_had_moved = piece_had_moved
@@ -1031,7 +1034,7 @@ class MoveRecord:
         self.old_castling_rights = old_castling_rights
         self.algebraic_notation = algebraic_notation
 
-        # THE FIX: Remember if this was a ghost move!
+        self.old_halfmove_clock = old_halfmove_clock
         self.is_imagining = is_imagining
 
 # </editor-fold>
@@ -1114,7 +1117,7 @@ class Board:
         self.draw_offered_by = None  # Remembers who extended their hand
         self.is_stalemate = False
 
-        # --- THE DIARY ---
+        self.position_counts = {}
         self.move_log: list[MoveRecord] = []
 
         if fen: self.load_fen(fen)
@@ -1148,6 +1151,9 @@ class Board:
         self.fullmove_number = int(fullmove)
 
         self.update_game_state()
+
+        core_fen = self.generate_core_fen()
+        self.position_counts[core_fen] = 1
 
     def generate_fen(self) -> str:
         """Scans the board and generates a perfect FEN string on demand."""
@@ -1200,6 +1206,37 @@ class Board:
 
         # Smash it all together
         return f"{board_part} {active_part} {castling_part} {ep_part} {halfmove} {fullmove}"
+
+    def generate_core_fen(self) -> str:
+        """The Deja Vu Camera: Takes a photo of the board without the clocks."""
+        fen_rows = []
+        for row in range(8):
+            empty_count = 0
+            row_str = ""
+            for col in range(8):
+                piece = self.grid[row][col]
+                if piece is None:
+                    empty_count += 1
+                else:
+                    if empty_count > 0:
+                        row_str += str(empty_count)
+                        empty_count = 0
+                    char = piece.type.value
+                    if piece.color == ChessColor.WHITE:
+                        char = char.upper()
+                    else:
+                        char = char.lower()
+                    row_str += char
+            if empty_count > 0:
+                row_str += str(empty_count)
+            fen_rows.append(row_str)
+
+        board_part = "/".join(fen_rows)
+        active_part = 'w' if self.active_color == ChessColor.WHITE else 'b'
+        castling_part = self.castling_rights if self.castling_rights else "-"
+        ep_part = self.en_passant.to_notation() if self.en_passant else "-"
+
+        return f"{board_part} {active_part} {castling_part} {ep_part}"
 
     def get_algebraic_notation(self, move, piece, victim):
         """Calculates the exact SAN string for a move before it happens."""
@@ -1338,94 +1375,101 @@ class Board:
             else:
                 self.is_stalemate = False
 
-    def execute_move(self, move: Move, is_imagining = False):
+        # 1. The 50-Move Rule (100 half-moves)
+        if self.halfmove_clock >= 100:
+                self.is_draw = True
+
+        # 2. The 3-Fold Repetition Rule
+        # We just look at the photo we just took!
+        current_core_fen = self.generate_core_fen()
+        if self.position_counts.get(current_core_fen, 0) >= 3:
+                self.is_draw = True
+
+    def execute_move(self, move: Move, is_imagining=False):
         """Replaces the old 'move_piece' and natively handles En Passant using the Move manual."""
         piece = self.get_piece_at(move.from_pos)
         if not piece: return
 
-        # ==========================================
-        # THE DIARY: TAKE THE SNAPSHOT BEFORE MOVING
-        # ==========================================
-        # Find out if anyone is about to die
+        # 1. THE DIARY: Snapshot BEFORE moving (This part is correct)
         victim = self.get_piece_at(move.victim_pos) if move.victim_pos else None
+        san_string = "GHOST_MOVE" if is_imagining else self.get_algebraic_notation(move, piece, victim)
 
-        if is_imagining:
-            san_string = "GHOST_MOVE"
-
-        else: san_string = self.get_algebraic_notation(move, piece, victim)
-
-        # Take the photograph
         record = MoveRecord(
-            move=move,
-            moved_piece=piece,
-            piece_had_moved=piece.has_moved,
-            clocks=CLOCKS,
-            victim_piece=victim,
-            old_en_passant=self.en_passant,
-            old_castling_rights=self.castling_rights,
-            algebraic_notation=san_string,
-            is_imagining=is_imagining
+            move=move, moved_piece=piece, piece_had_moved=piece.has_moved,
+            clocks=CLOCKS, victim_piece=victim, old_en_passant=self.en_passant,
+            old_castling_rights=self.castling_rights, algebraic_notation=san_string,
+            is_imagining=is_imagining, old_halfmove_clock=self.halfmove_clock
         )
-
-        # Save it in the book
         self.move_log.append(record)
 
-        # 1. Capture Logic (Handles normal captures AND En Passant inherently)
-        if move.victim_pos:
-            victim = self.get_piece_at(move.victim_pos)
-            if victim and victim.color != piece.color:
-                victim.die()
-                self.grid[move.victim_pos.row][move.victim_pos.col] = None
+        # 2. UPDATE CLOCKS & ALBUM TRASH CAN
+        # If a pawn moves or someone dies, the old photos are useless!
+        if piece.type == ChessPieceType.PAWN or move.victim_pos:
+            self.halfmove_clock = 0
+            if not is_imagining:
+                self.position_counts.clear() # THE TRASH CAN: Reset the repeats
+        else:
+            self.halfmove_clock += 1
 
-        # check castle
+        if self.active_color == ChessColor.BLACK:
+            self.fullmove_number += 1
+
+        # 3. ACTUALLY MOVE THE PIECES (Physics happens here)
+        sound_to_play = "move"
+
+        if move.victim_pos:
+            victim_piece = self.get_piece_at(move.victim_pos)
+            if victim_piece and victim_piece.color != piece.color:
+                victim_piece.die()
+                self.grid[move.victim_pos.row][move.victim_pos.col] = None
+                sound_to_play = "capture"
+
         if move.move_type == MoveType.CASTLE:
             rook = self.get_piece_at(move.to_pos)
-            if not rook: return
-            if can_castle(self,piece,rook):
+            if rook:
                 self.perform_castle(piece, rook)
                 piece.has_moved = True
-
-
+                sound_to_play = "castle"
         else:
-            # 2. Move Logic
             self.grid[move.to_pos.row][move.to_pos.col] = piece
             self.grid[move.from_pos.row][move.from_pos.col] = None
             piece.position = move.to_pos
             piece.has_moved = True
 
-
-
-        #check promotion
         if move.move_type == MoveType.PROMOTION:
             piece.die()
+            promo_val = move.promotion_choice.value if move.promotion_choice and not is_imagining else "Q"
+            self.grid[move.to_pos.row][move.to_pos.col] = create_piece_with_specified_color(
+                piece.color, str(promo_val), move.to_pos)
+            sound_to_play = "promote"
 
-            promo_type = move.promotion_choice
-            if promo_type is None or is_imagining:
-                promo_val = ChessPieceType.QUEEN.value
-            else:
-                promo_val = str(promo_type.value)
-
-            self.grid[move.to_pos.row][move.to_pos.col] = create_piece_with_specified_color(piece.color,
-                promo_val, move.to_pos)
-
-        # 3. En Passant Memory Update
-        self.en_passant = None  # Always clear old memory
+        self.en_passant = None
         if piece.type == ChessPieceType.PAWN and abs(move.to_pos.row - move.from_pos.row) == 2:
             mid_row = (move.to_pos.row + move.from_pos.row) // 2
             self.en_passant = SquarePosition(row=mid_row, col=move.to_pos.col)
 
+        # --- THE FIX: TAKE THE PHOTO NOW! ---
+        # The piece is in the new room, so now we click the camera.
+        if not is_imagining:
+            core_fen = self.generate_core_fen()
+            self.position_counts[core_fen] = self.position_counts.get(core_fen, 0) + 1
+
+        # 4. LET THE REFEREE CHECK THE ALBUM
         self.update_game_state()
 
-        # --- THE RED PEN: Add + or # to the Diary ---
-        # The turn hasn't switched yet, so active_color is still the guy who just moved.
+        # --- THE RED PEN & FINAL SFX CHECK ---
         enemy_player = PLAYERS[OTHER_COLOR[self.active_color]]
 
         if enemy_player.lost:
-            # They have no legal moves and are in check. Checkmate!
             self.move_log[-1].algebraic_notation += "#"
+            sound_to_play = "checkmate"  # Checkmate is the loudest sound!
         elif enemy_player.is_in_check:
-            # They are in check, but survive to fight another day.
             self.move_log[-1].algebraic_notation += "+"
+            sound_to_play = "check"  # Check overrides normal captures!
+
+        # --- THE DJ PRESSES PLAY ---
+        if not is_imagining:
+            play_sfx(sound_to_play)
 
         self.switch_turn()
 
@@ -1520,13 +1564,22 @@ class Board:
 
         return False
 
+
     def undo_move(self):
         """Reads the last page of the diary and reverses time."""
         if len(self.move_log) == 0:
             return False
+
         if self.is_draw:
             self.is_draw = False
             self.is_stalemate = False
+
+        current_core_fen = self.generate_core_fen()
+        if current_core_fen in self.position_counts:
+            self.position_counts[current_core_fen] -= 1
+            if self.position_counts[current_core_fen] <= 0:
+                del self.position_counts[current_core_fen] #Undo the move in the clocks
+
         # 1. Open the Diary and rip out the last page
         record = self.move_log.pop()
         move = record.move
@@ -1558,12 +1611,12 @@ class Board:
 
             # Restore their 'has_moved' status
             piece.has_moved = record.piece_had_moved
-            rook.has_moved = False  # It hadn't moved if we were allowed to castle!
+            rook.has_moved = False
 
         else:
             # 4. NORMAL UNDO (Moves, Captures, En Passant, Promotions)
 
-            # Erase whatever is on the destination square (the piece, or the new Promotion Queen)
+            # Erase whatever is on the destination square
             self.grid[move.to_pos.row][move.to_pos.col] = None
 
             # Put the original piece back where it started
@@ -1585,12 +1638,20 @@ class Board:
             for color in ChessColor:
                 CLOCKS[color].remaining = record.current_times[color]
 
-        # 7. Give the turn back and recalculate check
+        # 7. Give the turn back
         self.switch_turn()
+
+        # 8. Recalculate the board state
         self.update_game_state()
 
-        return True
+        # --- THE RUTHLESS MENTOR FIX ---
+        # update_game_state only updates the ENEMY king!
+        # We MUST force the active king to wake up and dump its ghost moves!
+        for p in self.get_all_pieces():
+            if p.is_king():
+                p.update_all_legal_moves(self)
 
+        return True
 
 
 
@@ -1791,6 +1852,8 @@ def draw_video_settings_page(screen):
             color = (200, 150, 100) if rect.collidepoint(mouse_pos) else (180, 120, 80) # Orange
             if PREFERENCES['animation_time'] == 0.0:
                 txt_str = "Animation: Instant (0s)"
+            if PREFERENCES['animation_time'] == 60.0:
+                txt_str = "Yes"
             else:
                 txt_str = f"Animation: {PREFERENCES['animation_time']}s"
 
@@ -1826,31 +1889,29 @@ def draw_audio_settings_page(screen):
     screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
 
     # 3. Dynamic Loop for Buttons
+    # 3. Dynamic Loop for Buttons
     for i, rect in enumerate(AUDIO_SETTINGS_RECTS):
         btn_name = AUDIO_SETTINGS_OPTIONS[i]
 
-        if btn_name == "Master Mute":
-            is_muted = PREFERENCES["master_mute"]
-            color = (80, 180, 80) if is_muted else (180, 80, 80)
-            txt_str = "Master Mute: ON" if is_muted else "Master Mute: OFF"
+        if btn_name == "Master Playing":
+            # The Fix: Playing is the opposite of muted!
+            is_playing = not PREFERENCES["master_mute"]
+            color = (80, 180, 80) if is_playing else (180, 80, 80)
+            txt_str = "Master Playing: ON" if is_playing else "Master Playing: OFF"
 
-        elif btn_name == "Music Mute":
-            is_muted = PREFERENCES["music_mute"]
-            color = (80, 180, 80) if is_muted else (180, 80, 80)
-            txt_str = "Music Mute: ON" if is_muted else "Music Mute: OFF"
+        elif btn_name == "Music Playing":
+            is_playing = not PREFERENCES["music_mute"]
+            color = (80, 180, 80) if is_playing else (180, 80, 80)
+            txt_str = "Music Playing: ON" if is_playing else "Music Playing: OFF"
 
-        elif btn_name == "SFX Mute":
-            is_muted = PREFERENCES["sfx_mute"]
-            color = (80, 180, 80) if is_muted else (180, 80, 80)
-            txt_str = "SFX Mute: ON" if is_muted else "SFX Mute: OFF"
+        elif btn_name == "SFX Playing":
+            is_playing = not PREFERENCES["sfx_mute"]
+            color = (80, 180, 80) if is_playing else (180, 80, 80)
+            txt_str = "SFX Playing: ON" if is_playing else "SFX Playing: OFF"
 
         elif btn_name == "Sound Pack":
             color = (100, 100, 100)  # Grayed out, because we only have one!
             txt_str = f"Pack: {PREFERENCES['sound_pack']}"
-
-        # Hover effect
-        if rect.collidepoint(mouse_pos) and btn_name != "Sound Pack":
-            color = (min(255, color[0] + 20), min(255, color[1] + 20), min(255, color[2] + 20))
 
         pygame.draw.rect(screen, color, rect, border_radius=15)
         pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
@@ -2787,13 +2848,14 @@ def run_audio_settings_screen():
                     if rect.collidepoint(event.pos):
                         btn_name = AUDIO_SETTINGS_OPTIONS[i]
 
-                        if btn_name == "Master Mute":
+                        # THE FIX: Listen for the new button names!
+                        if btn_name == "Master Playing":
                             PREFERENCES["master_mute"] = not PREFERENCES["master_mute"]
-                            play_music(CURRENT_MUSIC)  # Instantly mute/unmute
-                        elif btn_name == "Music Mute":
+                            play_music(LAST_REQUESTED_MUSIC)  # Instantly mute/unmute
+                        elif btn_name == "Music Playing":
                             PREFERENCES["music_mute"] = not PREFERENCES["music_mute"]
-                            play_music(CURRENT_MUSIC)
-                        elif btn_name == "SFX Mute":
+                            play_music(LAST_REQUESTED_MUSIC)
+                        elif btn_name == "SFX Playing":
                             PREFERENCES["sfx_mute"] = not PREFERENCES["sfx_mute"]
 
                         save_preferences()
@@ -2856,7 +2918,7 @@ def run_video_settings_screen():
                             save_preferences()
 
                         elif btn_name == "Animation Time":
-                            times = [0.0, 0.1, 0.2, 0.3, 0.5]
+                            times = [0.0, 0.1, 0.2, 0.3, 0.5,60.0]
                             curr = PREFERENCES["animation_time"]
                             idx = times.index(curr) if curr in times else 2
                             PREFERENCES["animation_time"] = times[(idx + 1) % len(times)]
@@ -3240,6 +3302,7 @@ def run_home_screen():
     global SCREEN
     """The Waiting Room. You stay here until you click Start or Quit."""
     pygame_clock = pygame.time.Clock()
+    play_music("menu_music")
 
     while True:
         for event in pygame.event.get():
@@ -3371,6 +3434,8 @@ def main():
             ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
         else: ai_color = None
 
+        play_music("board_music")
+
 
     def undo_move():
         nonlocal drawn_arrows, highlighted_squares, picking_piece, is_dragging, promotion_pending, ai_thinking_timer
@@ -3402,7 +3467,6 @@ def main():
     CLOCKS[BOARD.active_color].start()
 
     ai_color = None
-    reset_match()
 
 
     is_paused = False
@@ -3411,6 +3475,8 @@ def main():
     home_screen_action = run_home_screen()
     if home_screen_action == MenuSignal.QUIT:
         running = False
+    elif home_screen_action == MenuSignal.START_GAME:
+        reset_match()
 
     while running:
         for event in pygame.event.get():

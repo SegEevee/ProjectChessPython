@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets'), ('models', 'models'), ('fast_engine', 'fast_engine'), ('saved_games', 'saved_games'), ('settings_data', 'settings_data'), ('side_scripts', 'side_scripts'), ('chess.py', '.')],
+    datas=[('assets', 'assets'), ('side_scripts', 'side_scripts'), ('models', 'models'), ('chess.py', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

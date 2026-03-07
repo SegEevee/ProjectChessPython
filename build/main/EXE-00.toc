@@ -81,7 +81,7 @@
  [],
  False,
  False,
- 1772747782,
+ 1772820939,
  [('runw.exe',
    'C:\\Users\\segev\\studies\\software '
    'engineering\\First\\ProjectChessPython\\.venv\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',

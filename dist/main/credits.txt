@@ -1,0 +1,16 @@
+Thank you for playing!! hope you are enjoying it!
+
+
+
+All code written by Segev Jacobi (aka bog)
+
+All visuals where brutally stolen from the internet (if some1 wants to draw pieces (in standard form) show me ill be glad).
+
+as for pack 1:
+
+All the SFX were recorded by me on my own chessboard because all of 
+the internet soundbites suck
+
+A HUGE thanks for Plony_K for making the music for the menu and the game loop!! Couldn't have made music without u (unless some1 wants to prove me wrong for pack 2)
+
+
