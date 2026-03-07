@@ -2528,174 +2528,255 @@ EVALUATION_CACHE = {}
 
 #<editor-fold desc="BOT">
 
-#<editor-fold desc="NEURAL NETWORK">
-# from keras.models import load_model
-#
-#
-# import zstandard as zstd
-# from keras.models import Sequential
-# from keras.layers import Dense, Dropout, Input
-# from keras.callbacks import EarlyStopping
-#
-#
-#
-# def ai_get_evaluation(board):
-#     """Asks the trained brain: 'Who is winning right now?'"""
-#     global CHESS_MODEL, EVALUATION_CACHE
-#
-#     current_fen = board.generate_fen()
-#
-#     # THE SPEED HACK: Did we already calculate this exact board today?
-#     if current_fen in EVALUATION_CACHE:
-#         return EVALUATION_CACHE[current_fen]
-#
-#     if CHESS_MODEL is None:
-#         try:
-#             CHESS_MODEL = load_model('models/chess_brain.keras')
-#             print("AI Brain Loaded Successfully.")
-#         except Exception as e:
-#             print(f"Error loading AI model: {e}")
-#             return 0.5
-# # ==========================================
-# # 1. THE TRANSLATOR (FEN -> 768 Array)
-# # ==========================================
-#
-#
-# # ==========================================
-# # 2. THE DATA FACTORY (Raw JSON -> Big Data)
-# # ==========================================
-# def squish_score(cp: int) -> float:
-#     """Turns Centipawns (-300 to +300) into a Win Probability (0.0 to 1.0)."""
-#     # This is a classic chess math trick.
-#     # 0 cp = 0.5 probability.
-#     # +400 cp = ~0.99 probability.
-#     return 1 / (1 + math.exp(-0.004 * cp))
-#
-#
-# def build_chess_database(zst_file_path: str, output_name: str, max_rows: int = 10000):
-#     """Eats a compressed .zst file line by line without exploding your RAM."""
-#     X = []
-#     y = []
-#
-#     print(f"Factory started. Streaming massive file: {zst_file_path}...")
-#
-#     try:
-#         # 1. Open the compressed file in 'binary read' mode
-#         with open(zst_file_path, 'rb') as compressed_file:
-#             # 2. Attach the Zstandard unzipper
-#             dctx = zstd.ZstdDecompressor()
-#
-#             # 3. Create a stream (a pipe) that reads the unzipped data as text
-#             with dctx.stream_reader(compressed_file) as reader:
-#                 text_stream = io.TextIOWrapper(reader, encoding='utf-8')
-#
-#                 # 4. Read it line by line (Sipping from the firehose)
-#                 for i, line in enumerate(text_stream):
-#                     if i >= max_rows:
-#                         break  # THE SAFETY VALVE
-#
-#                     data = json.loads(line)
-#                     fen = data['fen']
-#
-#                     try:
-#                         best_eval = data['evals'][0]['pvs'][0]
-#
-#                         if 'mate' in best_eval:
-#                             mate_in = best_eval['mate']
-#                             score = 1.0 if mate_in > 0 else 0.0
-#                         else:
-#                             cp = best_eval['cp']
-#                             score = squish_score(cp)
-#
-#                         X.append(fen_to_features(fen))
-#                         y.append(score)
-#
-#                     except (KeyError, IndexError):
-#                         # Skip broken lines
-#                         continue
-#
-#                         # A heartbeat monitor so you know it hasn't crashed
-#                     if (i + 1) % 5000 == 0:
-#                         print(f"Processed {i + 1} boards...")
-#
-#         # 5. Save the translated numbers
-#         np.savez_compressed(f'data/{output_name}.npz', X=np.array(X), y=np.array(y))
-#         print(f"Success! Processed {len(X)} valid boards and saved to data/{output_name}.npz")
-#
-#     except FileNotFoundError:
-#         print(f"ERROR: Could not find the file at {zst_file_path}. Check the path!")
-#
-#
-# # ==========================================
-# # 3. THE BLANK CANVAS (Your Neural Network)
-# # ==========================================
-# def train_chess_brain():
-#     """Load the processed data and train the AI."""
-#     print("Loading data...")
-#     data = np.load('data/chess_training_data.npz')
-#     X = data['X']
-#     y = data['y']
-#
-#     print("Data loaded.")
-#
-#
-#     model = Sequential([
-#         Input(shape=(768,)),  # 64 squares * 12 piece types
-#         Dense(512, activation='relu'),  # Big layer to find piece relationships
-#         Dropout(0.2),  # Prevents "Memorization" (Overfitting)
-#         Dense(256, activation='relu'),  # Finding positional patterns
-#         Dense(128, activation='relu'),  # Refining the score
-#         Dense(1, activation='sigmoid')  # Final Win Probability (0 to 1)
-#     ])
-#
-#     # 2. THE JUDGE
-#     model.compile(
-#         optimizer='adam',
-#         loss='mean_squared_error',  # Since y is a continuous probability
-#         metrics=['mae']  # Mean Absolute Error (how far we miss)
-#     )
-#
-#     # 3. THE KILL-SWITCH
-#     stop_early = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-#
-#     print("Training Beginning. This might take a few minutes...")
-#     model.fit(
-#         X, y,
-#         epochs=250,
-#         batch_size=64,
-#         callbacks=[stop_early]
-#     )
-#
-#     # 4. EXPORT THE KNOWLEDGE
-#     model.save('models/chess_brain.keras')
-#     print("Success! The Chess Brain is saved in models/chess_brain.keras")
-#
-#
-# # ==========================================
-# # 4. THE DEMI-BOARD (Headless Testing)
-# # ==========================================
-# def test_ai_without_graphics():
-#     """Runs a ghost board in memory so you don't have to load Pygame UI."""
-#     print("Summoning ghost board...")
-#     # You use your existing Board class, but we don't call the Pygame while-loop!
-#     ghost_board = Board(STARTING_POSITION)
-#
-#     print(f"Ghost Board FEN: {ghost_board.generate_fen()}")
-#
-#     # Test your translator
-#     features = fen_to_features(ghost_board.generate_fen())
-#     print(f"Features Array Shape: {features.shape}")
-#     print(f"Is White Rook on A1 (Index 3)? Value: {features[3]}")
-#
-#     # In the future, this is where you will load your trained model
-#     # and ask it to predict the score of the ghost_board!
-#
-#
-#
-#
-#</editor-fold>
-#THIS AREA IS CURRENTLY UNUSED! PLEASE DO NOT USE IT.
 
+# <editor-fold desc="NEURAL NETWORK">
+
+import os
+import io
+import json
+import math
+import numpy as np
+
+# We only load these heavy tools if we actually need them!
+from keras.models import load_model, Sequential
+from keras.layers import Dense, Dropout, Input
+from keras.callbacks import EarlyStopping
+import zstandard as zstd
+
+# --- THE LABEL ON THE BOX ---
+# The Iron Anchor ensures we always find the brain inside the Blue Box (.exe bundle)
+CHESS_BRAIN_PATH = get_asset_path(os.path.join("models", "chess_brain.keras"))
+
+
+# ==========================================
+# 1. THE TRANSLATOR (FEN -> 768 Switches)
+# ==========================================
+def fen_to_features(fen: str):
+    """
+    ELI5: The Neural Network doesn't speak 'Chess', it only speaks 'Numbers'.
+    We have an empty tray of 768 light switches.
+    We walk through the board and flip the correct switch for every piece we find.
+    """
+    features = np.zeros(768, dtype=np.float32)
+
+    piece_to_index = {
+        'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5,  # White
+        'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11  # Black
+    }
+
+    board_part = fen.split()[0]
+    rows = board_part.split('/')
+
+    for row_idx, row in enumerate(rows):
+        col_idx = 0
+        for char in row:
+            if char.isdigit():
+                col_idx += int(char)  # Skip the empty squares
+            else:
+                # Math magic to find the exact light switch number
+                piece_idx = piece_to_index[char]
+                square_idx = row_idx * 8 + col_idx
+                features[piece_idx * 64 + square_idx] = 1.0
+                col_idx += 1
+
+    return features
+
+
+# ==========================================
+# 2. THE ORACLE (Evaluating the Board)
+# ==========================================
+def evaluate_position(board):
+    """
+    The Oracle looks at the board, translates it to switches, and asks the Brain.
+    Returns 0.0 (Black is crushing it) to 1.0 (White is crushing it).
+    """
+    global CHESS_MODEL, EVALUATION_CACHE
+
+    current_fen = board.generate_fen()
+
+    # THE SPEED HACK: Did we already calculate this board today?
+    if current_fen in EVALUATION_CACHE:
+        return EVALUATION_CACHE[current_fen]
+
+    # WAKE UP THE BRAIN: If it's asleep, load it from the exact path.
+    if CHESS_MODEL is None:
+        try:
+            CHESS_MODEL = load_model(CHESS_BRAIN_PATH)
+            print("AI Brain Loaded Successfully.")
+        except Exception as e:
+            print(f"Warning: Brain surgery failed. {e}")
+            return 0.5  # If the brain is missing, guess a tie (0.5)
+
+    # Translate and Ask
+    features = fen_to_features(current_fen)
+
+    # We reshape because Keras expects a "list of boards", not just one!
+    prediction = CHESS_MODEL.predict(features.reshape(1, -1), verbose=0)
+    score = float(prediction[0][0])
+
+    EVALUATION_CACHE[current_fen] = score
+    return score
+
+
+def ai_get_evaluation(board):
+    """A simple wrapper for your other AI tools to use."""
+    return evaluate_position(board)
+
+
+# ==========================================
+# 3. THE BEGINNER BOT (Shallow Search)
+# ==========================================
+def get_beginner_bot_move(board, ai_color: ChessColor):
+    """
+    The Beginner Brain: Looks exactly 1 move ahead.
+    It simulates every legal move, asks the Oracle for a score, and picks the best one.
+    """
+    best_move = None
+
+    # White wants the highest score (1.0). Black wants the lowest score (0.0).
+    best_value = -float('inf') if ai_color == ChessColor.WHITE else float('inf')
+
+    moves_to_check = []
+
+    # 1. Gather all legal moves for our color
+    for piece in board.get_all_pieces():
+        if piece.color == ai_color:
+            for move in piece.legal_moves.values():
+                moves_to_check.append(move)
+
+    # Shuffle them so the bot doesn't play the exact same game every time!
+    random.shuffle(moves_to_check)
+
+    # 2. Test every move in our imagination
+    for move in moves_to_check:
+        board.execute_move(move, is_imagining=True)
+        current_eval = evaluate_position(board)
+        board.undo_move()
+
+        # 3. Did we find a better move?
+        if ai_color == ChessColor.WHITE:
+            if current_eval > best_value:
+                best_value = current_eval
+                best_move = move
+        else:
+            if current_eval < best_value:
+                best_value = current_eval
+                best_move = move
+
+    # Safety Net: If something goes horribly wrong, pick a random move.
+    if best_move is None and moves_to_check:
+        return random.choice(moves_to_check)
+
+    return best_move
+
+
+# ==========================================
+# 4. THE DATA FACTORY & TRAINING YARD
+# ==========================================
+def squish_score(cp: int) -> float:
+    """Turns Centipawns (-300 to +300) into a Win Probability (0.0 to 1.0)."""
+    return 1 / (1 + math.exp(-0.004 * cp))
+
+
+def build_chess_database(zst_file_path: str, output_name: str, max_rows: int = 10000):
+    """Eats a compressed .zst file line by line without exploding your RAM."""
+    X = []
+    y = []
+
+    print(f"Factory started. Streaming massive file: {zst_file_path}...")
+
+    try:
+        with open(zst_file_path, 'rb') as compressed_file:
+            dctx = zstd.ZstdDecompressor()
+            with dctx.stream_reader(compressed_file) as reader:
+                text_stream = io.TextIOWrapper(reader, encoding='utf-8')
+
+                for i, line in enumerate(text_stream):
+                    if i >= max_rows:
+                        break  # THE SAFETY VALVE
+
+                    data = json.loads(line)
+                    fen = data['fen']
+
+                    try:
+                        best_eval = data['evals'][0]['pvs'][0]
+
+                        if 'mate' in best_eval:
+                            mate_in = best_eval['mate']
+                            score = 1.0 if mate_in > 0 else 0.0
+                        else:
+                            cp = best_eval['cp']
+                            score = squish_score(cp)
+
+                        X.append(fen_to_features(fen))
+                        y.append(score)
+
+                    except (KeyError, IndexError):
+                        continue
+
+                    if (i + 1) % 5000 == 0:
+                        print(f"Processed {i + 1} boards...")
+
+        np.savez_compressed(f'data/{output_name}.npz', X=np.array(X), y=np.array(y))
+        print(f"Success! Processed {len(X)} valid boards and saved to data/{output_name}.npz")
+
+    except FileNotFoundError:
+        print(f"ERROR: Could not find the file at {zst_file_path}. Check the path!")
+
+
+def train_chess_brain():
+    """Load the processed data and train the AI."""
+    print("Loading data...")
+    data = np.load('data/chess_training_data.npz')
+    X = data['X']
+    y = data['y']
+    print("Data loaded.")
+
+    model = Sequential([
+        Input(shape=(768,)),
+        Dense(512, activation='relu'),
+        Dropout(0.2),
+        Dense(256, activation='relu'),
+        Dense(128, activation='relu'),
+        Dense(1, activation='sigmoid')
+    ])
+
+    model.compile(
+        optimizer='adam',
+        loss='mean_squared_error',
+        metrics=['mae']
+    )
+
+    stop_early = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+    print("Training Beginning. This might take a few minutes...")
+    model.fit(
+        X, y,
+        epochs=250,
+        batch_size=64,
+        callbacks=[stop_early]
+    )
+
+    # Save to the exact path where the game expects to find it!
+    model.save(CHESS_BRAIN_PATH)
+    print(f"Success! The Chess Brain is saved exactly at {CHESS_BRAIN_PATH}")
+
+
+def test_ai_without_graphics():
+    """Runs a ghost board in memory so you don't have to load Pygame UI."""
+    print("Summoning ghost board...")
+    # Requires the global STARTING_POSITION variable to exist
+    ghost_board = Board(STARTING_POSITION)
+
+    print(f"Ghost Board FEN: {ghost_board.generate_fen()}")
+    features = fen_to_features(ghost_board.generate_fen())
+    print(f"Features Array Shape: {features.shape}")
+
+    score = evaluate_position(ghost_board)
+    print(f"The Oracle scores this position as: {score}")
+
+
+# </editor-fold>
 
 def get_random_bot_move(board, ai_color: ChessColor): #PLACEHOLDER
     """The AI Brain: Gathers every possible move and pulls one out of a hat."""
@@ -2804,11 +2885,15 @@ def get_alperon_move(board, ai_color: ChessColor):
 
 
 def get_bot_move(board, ai_color:ChessColor,depth):
-    if depth == -1:
-        return get_alperon_move(board, ai_color)
-    elif depth == 1:
-        return get_random_bot_move(board,ai_color)
-    return bot.ai_get_best_move_cpp(board, ai_color, depth=depth)
+    match depth:
+        case -1:
+            return get_alperon_move(board, ai_color)
+        case 1:
+            return get_random_bot_move(board, ai_color)
+        case 3:
+            return get_beginner_bot_move(board, ai_color)
+        case _:
+            return bot.ai_get_best_move_cpp(board, ai_color, depth=depth)
 
 #</editor-fold>
 
