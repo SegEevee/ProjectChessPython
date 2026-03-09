@@ -1,6 +1,8 @@
 import socket
+import json
 
-MASTER_ADDRESS = "192.168.68.64"
+MASTER_ADDRESS = "192.168.68.64"  # Make sure this matches the laptop's IP!
+
 
 class Network:
     def __init__(self, ip_address=MASTER_ADDRESS):
@@ -8,58 +10,62 @@ class Network:
         self.server = ip_address
         self.port = 5555
         self.addr = (self.server, self.port)
-        self.color = self.connect()
+        self.color = None
+        self.sync_data = None
+
+        self.connect()
 
     def connect(self):
         try:
             self.client.connect(self.addr)
 
-            # 1. Get the Color (White/Black)
-            # We use a long timeout here because the other player might be slow!
-            self.client.settimeout(30.0)
-            color = self.client.recv(2048).decode()
-            print(f"[NETWORK] My assigned color: {color}")
+            # 1. Grab the Color (The server sends this instantly)
+            self.client.settimeout(5.0)
+            response = self.client.recv(2048).decode()
 
-            # 2. THE LOBBY WAIT: Stay here until the Server says "START_GAME"
-            print("[NETWORK] Waiting for opponent to join...")
+            if response.startswith("COLOR|"):
+                self.color = response.split("|")[1]
+                print(f"[NETWORK] The Referee assigned me: {self.color}")
+            elif response.startswith("REJECT|"):
+                print("[NETWORK] Bouncer kicked us out: Room is full.")
+                return False
 
-            while True:
-                # We wait for the "START_GAME" string from the server
-                signal = self.client.recv(2048).decode()
-                if signal == "START_GAME":
-                    print("[NETWORK] Match Found! Game Starting...")
-                    break
-                elif signal == "ROOM_FULL":
-                    print("[NETWORK] Error: Server is already full!")
-                    return None
-
-            # 3. SUCCESS: Now make the socket non-blocking for the actual game
+            # 2. THE CRITICAL FIX: Make the socket non-blocking!
+            # This allows Pygame to check the mail, see it's empty, and go back to drawing the screen.
             self.client.setblocking(False)
-            return color
+            return True
 
-        except socket.timeout:
-            print("[ERROR] Connection Timed Out. No one joined the lobby.")
-            return None
         except Exception as e:
             print(f"[ERROR] Connection failed: {e}")
-            return None
+            return False
 
-
-    def send_move(self, san_string):
+    def send_message(self, tag: str, payload: str = ""):
+        """The new way we talk to the server. We must tag everything!"""
         try:
-            self.client.send(str.encode(san_string))
+            msg = f"{tag}|{payload}"
+            self.client.send(str.encode(msg))
         except socket.error as e:
-            print(f"Network error sending move: {e}")
+            print(f"[NETWORK ERROR] {e}")
 
     def peek_mailbox(self):
-        """Runs 60 times a second. Peeks for an enemy move."""
+        """Reads the mail and separates the Tag from the Payload."""
         try:
-            # Read whatever is in the pipe
-            data = self.client.recv(2048).decode()
-            return data
+            # We use 4096 because the JSON photocopy can be a bit large
+            data = self.client.recv(4096).decode()
+            if not data:
+                return None, None
+
+            # Split the string at the VERY FIRST pipe symbol
+            parts = data.split("|", 1)
+            if len(parts) == 2:
+                tag, payload = parts[0], parts[1]
+                return tag, payload
+            return data, ""
+
         except BlockingIOError:
-            # Mailbox is empty. Nothing to worry about.
-            return None
-        except socket.error as e:
-            # A real error occurred (like getting disconnected)
-            return None
+            # Mailbox is empty. No big deal.
+            return None, None
+        except Exception as e:
+            # The server crashed or we lost Wi-Fi
+            print(f"[NETWORK DISCONNECT] {e}")
+            return "DISCONNECT", None

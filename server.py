@@ -1,93 +1,178 @@
 import socket
 import threading
 import time
+import json
 
-# The "Open All Doors" address
+# --- CONFIG ---
 SERVER_IP = "0.0.0.0"
 PORT = 5555
+STARTING_TIME = 300.0  # 5 minutes in seconds
 
-# 1. Create the Phone
+
+class ChessMatch:
+    """The Referee's Brain."""
+
+    def __init__(self):
+        # The Chairs: Maps a Color to an IP Address (Allows Reconnection)
+        self.seats = {"White": None, "Black": None}
+        # The Phones: Maps a Color to an active Socket Connection
+        self.connections = {"White": None, "Black": None}
+
+        self.move_history = []
+        self.active_turn = "White"
+        self.status = "WAITING"  # WAITING, PLAYING, GAME_OVER
+
+        self.clocks = {"White": STARTING_TIME, "Black": STARTING_TIME}
+        self.last_clock_update = 0.0
+
+    def update_clocks(self):
+        """The Master Stopwatch. Updates the active player's time."""
+        if self.status != "PLAYING" or self.last_clock_update == 0:
+            return
+
+        now = time.time()
+        elapsed = now - self.last_clock_update
+        self.clocks[self.active_turn] -= elapsed
+        self.last_clock_update = now
+
+        # Did someone's flag fall?
+        if self.clocks[self.active_turn] <= 0:
+            self.clocks[self.active_turn] = 0
+            self.status = "GAME_OVER"
+            self.broadcast(f"FLAG|{self.active_turn}")
+
+    def get_sync_data(self):
+        """Photocopies the referee's notebook into a JSON string."""
+        self.update_clocks()
+        data = {
+            "status": self.status,
+            "history": self.move_history,
+            "turn": self.active_turn,
+            "time_w": max(0, self.clocks["White"]),
+            "time_b": max(0, self.clocks["Black"])
+        }
+        return "SYNC|" + json.dumps(data)
+
+    def broadcast(self, message):
+        """Shouts a message to both players (if they are currently connected)."""
+        print(f"[BROADCAST] {message}")
+        for color, conn in self.connections.items():
+            if conn:
+                try:
+                    conn.sendall(str.encode(message))
+                except Exception as e:
+                    print(f"[ERROR] Failed to broadcast to {color}: {e}")
+
+
+# --- THE OFFICE ---
+MATCH = ChessMatch()
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-# 2. Plug the Phone into the Wall
 try:
     server.bind((SERVER_IP, PORT))
+    server.listen(2)
+    print(f"[REFEREE] Server is LIVE on port {PORT}. Waiting for players...")
 except socket.error as e:
-    print(f"[ERROR] Failed to bind to port {PORT}. Is another server already running?")
-    print(str(e))
+    print(f"[FATAL] Port {PORT} is blocked! {e}")
     exit()
 
-# 3. Turn the Ringer On
-server.listen(2)
-print(f"[REFEREE] Awake and listening on port {PORT}...")
 
-clients = []
-COLORS = ["White", "Black"]
+def handle_client(conn, addr, my_color):
+    """The worker assigned to listen to one specific player."""
+    global MATCH
 
-def handle_client(conn, player_id):
-    """The Worker assigned to talk to a specific player."""
-    color = COLORS[player_id]
+    # 1. THE SYNC: Send them the current state of the game
+    print(f"[LOBBY] Sending notebook photocopy to {my_color}...")
+    conn.send(str.encode(MATCH.get_sync_data()))
 
-    # 1. Immediately tell the game client what color it is playing!
-    conn.send(str.encode(color))
-    print(f"[REFEREE] Assigned {color} to Player {player_id + 1}")
+    # 2. THE STARTING GUN: If the room is now full, start the match!
+    if MATCH.connections["White"] and MATCH.connections["Black"] and MATCH.status == "WAITING":
+        time.sleep(0.5)  # The Anti-Squish Pause
+        MATCH.status = "PLAYING"
+        MATCH.last_clock_update = time.time()
+        MATCH.broadcast("START|")
+        print("[REFEREE] --- GAME STARTED ---")
 
-    # 2. THE WAITING ROOM: Hang out here until the 2nd player joins
-    print(f"[REFEREE] Waiting for opponent for {color}...")
-    while len(clients) < 2:
-        time.sleep(0.1) # Check the door every 0.1 seconds
-
-    # 3. THE STARTING GUN! Both players are here.
-    time.sleep(0.5) # The Anti-Squish Pause
-    conn.send(str.encode("START_GAME"))
-    print(f"[REFEREE] Told {color} to START!")
-
-    # 4. THE MATCH LOOP
+    # 3. THE MATCH LOOP: Listen for moves or resignations
     while True:
         try:
-            # Wait for the player to send a move
             data = conn.recv(2048)
             if not data:
-                print(f"[REFEREE] Player {player_id + 1} ({color}) disconnected.")
-                break
+                break  # Client disconnected
 
             msg = data.decode("utf-8")
-            print(f"[MOVE] {color} played: {msg}")
 
-            # Forward the move to the OTHER player (The Magic Mirror)
-            for c in clients:
-                if c != conn:
-                    c.sendall(data)
+            if msg.startswith("MOVE|"):
+                san = msg.split("|")[1]
+                print(f"[GAME] {my_color} played: {san}")
+
+                # Update the Referee's notebook
+                MATCH.update_clocks()
+                MATCH.move_history.append(san)
+                MATCH.active_turn = "Black" if MATCH.active_turn == "White" else "White"
+                MATCH.last_clock_update = time.time()
+
+                # Forward the move to the OTHER player
+                other_color = "Black" if my_color == "White" else "White"
+                if MATCH.connections[other_color]:
+                    MATCH.connections[other_color].sendall(str.encode(f"MOVE|{san}"))
+
+            elif msg == "RESIGN":
+                print(f"[GAME] {my_color} has resigned!")
+                MATCH.status = "GAME_OVER"
+                MATCH.broadcast(f"RESIGN|{my_color}")
 
         except Exception as e:
-            print(f"[ERROR] Connection lost with {color}: {e}")
+            print(f"[ERROR] Connection lost with {my_color}: {e}")
             break
 
-    # Cleanup when someone rage quits
-    print(f"[REFEREE] Closing connection for Player {player_id + 1}")
-    if conn in clients:
-        clients.remove(conn)
+    # --- DISCONNECT HANDLING ---
+    print(f"[DISCONNECT] {my_color} ({addr[0]}) dropped the call.")
+    MATCH.connections[my_color] = None
+
+    # If the game was active, tell the other guy to wait
+    other_color = "Black" if my_color == "White" else "White"
+    if MATCH.status == "PLAYING" and MATCH.connections[other_color]:
+        MATCH.connections[other_color].sendall(str.encode("OPPONENT_DISCONNECTED|"))
+
     conn.close()
 
 
-def main_game_loop():
-    """The Main Loop: The Referee standing at the door waiting for knocks."""
-    while True:
-        conn, addr = server.accept()
-        print(f"[REFEREE] New connection established from {addr}")
+# --- THE FRONT DOOR ---
+while True:
+    conn, addr = server.accept()
+    ip_address = addr[0]
+    print(f"[DOOR] Knock from {ip_address}")
 
-        if len(clients) >= 2:
-            print("[REFEREE] Game is full. Rejecting extra connection.")
-            # Tell the late client the room is full so it doesn't freeze
-            conn.send(str.encode("ROOM_FULL"))
-            conn.close()
-            continue
+    assigned_color = None
 
-        clients.append(conn)
+    # RECONNECTION LOGIC: Did this IP sit down previously?
+    if MATCH.seats["White"] == ip_address:
+        assigned_color = "White"
+    elif MATCH.seats["Black"] == ip_address:
+        assigned_color = "Black"
+    else:
+        # NEW PLAYER LOGIC: Find an empty seat
+        if MATCH.seats["White"] is None:
+            assigned_color = "White"
+        elif MATCH.seats["Black"] is None:
+            assigned_color = "Black"
 
-        # Spawn a new thread (worker) so the server doesn't freeze
-        thread = threading.Thread(target=handle_client, args=(conn, len(clients) - 1))
-        thread.start()
+    # THE BOUNCER: Room is full, and you don't own a seat!
+    if assigned_color is None:
+        print(f"[BOUNCER] Rejected {ip_address}. Room is full.")
+        conn.send(str.encode("REJECT|ROOM_FULL"))
+        conn.close()
+        continue
 
-if __name__ == "__main__":
-    main_game_loop()
+    # Seat the player
+    MATCH.seats[assigned_color] = ip_address
+    MATCH.connections[assigned_color] = conn
+
+    # Tell the client what color they are
+    conn.send(str.encode(f"COLOR|{assigned_color}"))
+    time.sleep(0.2)  # Anti-Squish Pause before starting the worker loop
+
+    # Hand them to a worker thread
+    thread = threading.Thread(target=handle_client, args=(conn, addr, assigned_color))
+    thread.start()

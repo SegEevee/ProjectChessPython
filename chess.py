@@ -2944,6 +2944,52 @@ def quit_game():
     sys.exit()
 
 
+def run_waiting_room_screen():
+    global SCREEN, FPS, ONLINE_CONNECTION
+    pygame_clock = pygame.time.Clock()
+
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 40, bold=True)
+    font_sub = pygame.font.SysFont("Arial", 24)
+
+    # We stay in this loop drawing the screen until the Referee says "START"
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+        # 1. Check the Mailbox!
+        tag, payload = ONLINE_CONNECTION.peek_mailbox()
+
+        if tag == "SYNC":
+            # The server handed us the notebook photocopy. Save it for later!
+            ONLINE_CONNECTION.sync_data = json.loads(payload)
+            print("[LOBBY] Downloaded match data from server.")
+
+        elif tag == "START":
+            print("[LOBBY] The Starting Gun fired! Let's play.")
+            return MenuSignal.START_GAME
+
+        elif tag == "DISCONNECT":
+            print("[LOBBY] The Referee vanished. Going back to menu.")
+            return MenuSignal.BACK
+
+        # 2. Draw the Waiting Room
+        SCREEN.fill((30, 30, 35))
+        for row in range(8):
+            for col in range(10):
+                if (row + col) % 2 == 0:
+                    pygame.draw.rect(SCREEN, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+        txt1 = font_title.render(f"You are playing as {ONLINE_CONNECTION.color}", True, (255, 255, 255))
+        txt2 = font_sub.render("Waiting for opponent to join the room...", True, (200, 200, 200))
+
+        SCREEN.blit(txt1, txt1.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 40)))
+        SCREEN.blit(txt2, txt2.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 30)))
+
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
 def run_audio_settings_screen():
     global SCREEN, FPS
     pygame_clock = pygame.time.Clock()
@@ -3585,9 +3631,41 @@ def main():
             print("Connecting to Server...")
             ONLINE_CONNECTION = Network()  # Calls the Referee!
             if ONLINE_CONNECTION.color:
-                print(f"Connected! The Referee assigned you: {ONLINE_CONNECTION.color}")
-                # Override our local preference so the board flips correctly!
                 PREFERENCES["player_color"] = ONLINE_CONNECTION.color
+
+                # --- GO TO THE WAITING ROOM! ---
+                lobby_result = run_waiting_room_screen()
+                if lobby_result == MenuSignal.QUIT:
+                    quit_game()
+                elif lobby_result == MenuSignal.BACK:
+                    ONLINE_CONNECTION = None
+                    PREFERENCES["game_mode"] = "Multiplayer"
+                else:
+                    # --- THE FAST-FORWARD (RECONNECTION) ---
+                    sync = ONLINE_CONNECTION.sync_data
+                    if sync:
+                        print("[LOBBY] Syncing clocks and board state...")
+                        CLOCKS[ChessColor.WHITE].restore_time(sync["time_w"])
+                        CLOCKS[ChessColor.BLACK].restore_time(sync["time_b"])
+
+                        # Mute the DJ so we don't hear 40 move sounds like a machine gun!
+                        old_sfx = PREFERENCES["sfx_mute"]
+                        PREFERENCES["sfx_mute"] = True
+
+                        for san in sync["history"]:
+                            move = get_move_from_san(BOARD, san)
+                            if move:
+                                BOARD.execute_move(move)
+
+                        PREFERENCES["sfx_mute"] = old_sfx  # Turn the DJ back on
+
+                        # Sync the running clock
+                        if BOARD.active_color == ChessColor.WHITE:
+                            CLOCKS[ChessColor.BLACK].stop()
+                            CLOCKS[ChessColor.WHITE].start()
+                        else:
+                            CLOCKS[ChessColor.WHITE].stop()
+                            CLOCKS[ChessColor.BLACK].start()
             else:
                 print("Failed to connect. Falling back to Multiplayer.")
                 ONLINE_CONNECTION = None
@@ -3697,10 +3775,12 @@ def main():
                         # --- FLAG (RESIGN) BUTTONS ---
                     if W_FLAG_BTN_RECT.collidepoint(event.pos):
                         PLAYERS[ChessColor.WHITE].lost = True
+                        if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("RESIGN")
                         continue
 
                     if B_FLAG_BTN_RECT.collidepoint(event.pos):
                         PLAYERS[ChessColor.BLACK].lost = True
+                        if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("RESIGN")
                         continue
 
                     if PAUSE_BTN_RECT.collidepoint(event.pos):
@@ -3808,10 +3888,8 @@ def main():
 
                                 if ONLINE_CONNECTION is not None:
                                     san_string = BOARD.move_log[-1].algebraic_notation
-                                    # Strip the + or # so it sends cleanly
                                     clean_san = san_string.replace("+", "").replace("#", "")
-                                    ONLINE_CONNECTION.send_move(clean_san)
-
+                                    ONLINE_CONNECTION.send_message("MOVE", clean_san)
 
                 # --- RIGHT CLICK (Start Arrow) ---
                 elif event.button == 3:
@@ -3842,9 +3920,8 @@ def main():
                                     picking_piece = None
                                     if ONLINE_CONNECTION is not None:
                                         san_string = BOARD.move_log[-1].algebraic_notation
-                                        # Strip the + or # so it sends cleanly
                                         clean_san = san_string.replace("+", "").replace("#", "")
-                                        ONLINE_CONNECTION.send_move(clean_san)
+                                        ONLINE_CONNECTION.send_message("MOVE", clean_san)
                             else:
                                 picking_piece = None  # that's how I want it to be
 
@@ -3984,21 +4061,28 @@ def main():
                     ai_thinking_timer = 0
 
             #network
+
             elif ONLINE_CONNECTION is not None and not is_paused and game_over_btn_rect is None:
-                # If it's NOT our turn, we must be waiting for the internet!
-                if BOARD.active_color.value.upper() != ONLINE_CONNECTION.color.upper():
+                # We ALWAYS check the mailbox now, because the server might tell us our flag fell!
+                tag, payload = ONLINE_CONNECTION.peek_mailbox()
 
-                    incoming_san = ONLINE_CONNECTION.peek_mailbox()
-                    if incoming_san:
-                        print(f"Enemy played: {incoming_san}")
-                        # Use your reverse SAN trick to find the exact Move object
-                        enemy_move = get_move_from_san(BOARD, incoming_san)
+                if tag:
+                    if tag == "MOVE":
+                        # Only apply the move if it's NOT our turn (sanity check)
+                        if BOARD.active_color.value.upper() != ONLINE_CONNECTION.color.upper():
+                            enemy_move = get_move_from_san(BOARD, payload)
+                            if enemy_move:
+                                moving_piece = BOARD.get_piece_at(enemy_move.from_pos)
+                                animate_move(moving_piece, enemy_move.from_pos, enemy_move.to_pos)
+                                BOARD.execute_move(enemy_move)
 
-                        if enemy_move:
-                            # Fly the ghost!
-                            moving_piece = BOARD.get_piece_at(enemy_move.from_pos)
-                            animate_move(moving_piece, enemy_move.from_pos, enemy_move.to_pos)
-                            BOARD.execute_move(enemy_move)
+                    elif tag == "FLAG" or tag == "RESIGN":
+                        # Payload is the color ("White" or "Black"). The server decides who lost!
+                        loser_color = ChessColor.WHITE if payload == "White" else ChessColor.BLACK
+                        PLAYERS[loser_color].lost = True
+
+                    elif tag == "OPPONENT_DISCONNECTED":
+                        print("[NETWORK] Opponent disconnected! Do not close the window, they can reconnect.")
 
 
 
