@@ -126,16 +126,25 @@ def handle_client(conn, addr, my_color):
             print(f"[ERROR] Connection lost with {my_color}: {e}")
             break
 
-    # --- DISCONNECT HANDLING ---
-    print(f"[DISCONNECT] {my_color} ({addr[0]}) dropped the call.")
-    MATCH.connections[my_color] = None
+        # --- DISCONNECT HANDLING ---
+        print(f"[DISCONNECT] {my_color} ({addr[0]}) dropped the call.")
+        MATCH.connections[my_color] = None
 
-    # If the game was active, tell the other guy to wait
-    other_color = "Black" if my_color == "White" else "White"
-    if MATCH.status == "PLAYING" and MATCH.connections[other_color]:
-        MATCH.connections[other_color].sendall(str.encode("OPPONENT_DISCONNECTED|"))
+        # If the game was active, tell the other guy to wait
+        other_color = "Black" if my_color == "White" else "White"
+        if MATCH.status == "PLAYING" and MATCH.connections[other_color]:
+            try:
+                MATCH.connections[other_color].sendall(str.encode("OPPONENT_DISCONNECTED|"))
+            except:
+                pass  # They might have disconnected at the exact same millisecond
 
-    conn.close()
+        conn.close()
+
+        # --- THE JANITOR ---
+        # If both chairs are empty, sweep the floors and reset the match completely!
+        if MATCH.connections["White"] is None and MATCH.connections["Black"] is None:
+            print("[REFEREE] The room is empty. Sweeping the floors and resetting for a new match!")
+            MATCH = ChessMatch()
 
 
 # --- THE FRONT DOOR ---
