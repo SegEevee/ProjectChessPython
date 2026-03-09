@@ -730,7 +730,7 @@ class ChessClock:
         self.remaining = seconds
         self.ms = 0
     def standard_notation(self) -> str:
-        return f"{int(self.remaining/60):02d}:{self.remaining%60:02d}"
+        return f"{int(self.remaining / 60):02d}:{int(self.remaining % 60):02d}"
 
     def __bool__(self):
         return self.remaining != 0
