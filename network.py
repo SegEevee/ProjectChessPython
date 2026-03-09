@@ -14,24 +14,37 @@ class Network:
         try:
             self.client.connect(self.addr)
 
-            # 1. Get your color
-            self.client.settimeout(5.0)  # Give it time to talk
+            # 1. Get the Color (White/Black)
+            # We use a long timeout here because the other player might be slow!
+            self.client.settimeout(30.0)
             color = self.client.recv(2048).decode()
-            print(f"I am playing as: {color}")
+            print(f"[NETWORK] My assigned color: {color}")
 
-            # 2. WAIT FOR START SIGNAL
-            # This will 'freeze' here until the second player joins the server!
-            print("Waiting for opponent...")
-            start_signal = self.client.recv(2048).decode()
+            # 2. THE LOBBY WAIT: Stay here until the Server says "START_GAME"
+            print("[NETWORK] Waiting for opponent to join...")
 
-            if start_signal == "START_GAME":
-                print("Game is LIVE!")
-                self.client.setblocking(False)  # Go back to non-blocking for the game
-                return color
+            while True:
+                # We wait for the "START_GAME" string from the server
+                signal = self.client.recv(2048).decode()
+                if signal == "START_GAME":
+                    print("[NETWORK] Match Found! Game Starting...")
+                    break
+                elif signal == "ROOM_FULL":
+                    print("[NETWORK] Error: Server is already full!")
+                    return None
 
-        except Exception as e:
-            print(f"Connection failed: {e}")
+            # 3. SUCCESS: Now make the socket non-blocking for the actual game
+            self.client.setblocking(False)
+            return color
+
+        except socket.timeout:
+            print("[ERROR] Connection Timed Out. No one joined the lobby.")
             return None
+        except Exception as e:
+            print(f"[ERROR] Connection failed: {e}")
+            return None
+
+
     def send_move(self, san_string):
         try:
             self.client.send(str.encode(san_string))
