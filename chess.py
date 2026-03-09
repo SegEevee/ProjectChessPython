@@ -6,6 +6,7 @@ import os
 import json
 import re
 import random
+from network import Network
 from enum import Enum
 from side_scripts import opening_books as openings
 from side_scripts import python_glue as bot
@@ -1810,7 +1811,7 @@ def draw_general_settings_page(screen):
             txt_str = f"Mode: {PREFERENCES['game_mode']}"
 
         elif btn_name == "Player Color":
-            if PREFERENCES["game_mode"] == "Multiplayer":
+            if PREFERENCES["game_mode"] == "Multiplayer" or PREFERENCES["game_mode"] == "Online":
                 color = (60, 60, 60)  # Dark Grey (Disabled)
                 txt_str = "Color: N/A"
             else:
@@ -2549,6 +2550,8 @@ IMAGE_CACHE = {}
 
 NOTATION_FONT = None  # We will initialize this inside main()
 
+ONLINE_CONNECTION = None
+
 CHESS_MODEL = None
 EVALUATION_CACHE = {}
 
@@ -3075,12 +3078,15 @@ def run_general_settings_screen():
                             for color in [ChessColor.WHITE, ChessColor.BLACK]:
                                 CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
 
+
                         elif btn_name == "Game Mode":
-                            if PREFERENCES["game_mode"] == "Multiplayer":
-                                PREFERENCES["game_mode"] = "Singleplayer"
-                            else:
-                                PREFERENCES["game_mode"] = "Multiplayer"
-                            print(PREFERENCES["game_mode"])
+
+                            # The new 3-way cycle!
+                            modes = ["Singleplayer", "Multiplayer", "Online"]
+                            curr = PREFERENCES["game_mode"]
+                            # Find where we are in the list, and go to the next one
+                            idx = modes.index(curr) if curr in modes else 0
+                            PREFERENCES["game_mode"] = modes[(idx + 1) % len(modes)]
 
 
                         elif btn_name == "Player Color":
@@ -3473,7 +3479,7 @@ def run_home_screen():
 # <editor-fold desc="MAIN">
 
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED
+    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED,ONLINE_CONNECTION
 
     load_preferences()
     pygame.init()
@@ -3547,7 +3553,7 @@ def main():
     # ==========================================
     def reset_match():
         nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused, has_auto_saved, ai_thinking_timer, animation_state,ai_color
-        global BOARD_FLIPPED
+        global BOARD_FLIPPED,ONLINE_CONNECTION
         PLAYERS[ChessColor.WHITE].lost = False
         PLAYERS[ChessColor.BLACK].lost = False
         BOARD.is_draw = False
@@ -3575,11 +3581,25 @@ def main():
         CLOCKS[BOARD.active_color].start()
         CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
 
+        if PREFERENCES["game_mode"] == "Online":
+            print("Connecting to Server...")
+            ONLINE_CONNECTION = Network()  # Calls the Referee!
+            if ONLINE_CONNECTION.color:
+                print(f"Connected! The Referee assigned you: {ONLINE_CONNECTION.color}")
+                # Override our local preference so the board flips correctly!
+                PREFERENCES["player_color"] = ONLINE_CONNECTION.color
+            else:
+                print("Failed to connect. Falling back to Multiplayer.")
+                ONLINE_CONNECTION = None
+                PREFERENCES["game_mode"] = "Multiplayer"
+        else:
+            ONLINE_CONNECTION = None
+
         if PREFERENCES["game_mode"] == "Singleplayer":
             ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
         else: ai_color = None
 
-        if PREFERENCES["game_mode"] == "Singleplayer" and PREFERENCES["player_color"] == "Black":
+        if PREFERENCES["game_mode"] in ["Singleplayer", "Online"] and PREFERENCES["player_color"] == "Black":
             BOARD_FLIPPED = True
         else:
             BOARD_FLIPPED = False
@@ -3762,6 +3782,12 @@ def main():
 
                     clicked_piece = BOARD.get_piece_at(clicked)
 
+                    # --- NEW: ONLINE ANTI-CHEAT ---
+                    if PREFERENCES["game_mode"] == "Online" and ONLINE_CONNECTION:
+                        # If the piece you clicked does NOT match the color the Referee gave you...
+                        if clicked_piece is not None and clicked_piece.color.value.upper() != ONLINE_CONNECTION.color.upper():
+                            continue  # Ignore the click completely!
+
                     # 1. Grab a piece to drag
                     if clicked_piece is not None and clicked_piece.color == BOARD.active_color:
                         picking_piece = clicked_piece
@@ -3779,6 +3805,12 @@ def main():
                             else:
                                 BOARD.execute_move(move)
                                 picking_piece = None
+
+                                if ONLINE_CONNECTION is not None:
+                                    san_string = BOARD.move_log[-1].algebraic_notation
+                                    # Strip the + or # so it sends cleanly
+                                    clean_san = san_string.replace("+", "").replace("#", "")
+                                    ONLINE_CONNECTION.send_move(clean_san)
 
 
                 # --- RIGHT CLICK (Start Arrow) ---
@@ -3808,6 +3840,11 @@ def main():
                                 else:
                                     BOARD.execute_move(move)
                                     picking_piece = None
+                                    if ONLINE_CONNECTION is not None:
+                                        san_string = BOARD.move_log[-1].algebraic_notation
+                                        # Strip the + or # so it sends cleanly
+                                        clean_san = san_string.replace("+", "").replace("#", "")
+                                        ONLINE_CONNECTION.send_move(clean_san)
                             else:
                                 picking_piece = None  # that's how I want it to be
 
@@ -3924,7 +3961,7 @@ def main():
             game_over_btn_rect = None
 
         # ==========================================
-        # THE AI'S TURN
+        # THE AI OR THE NETWORK'S TURN
         # ==========================================
         if not is_paused and game_over_btn_rect is None:
             if ai_color is not None and BOARD.active_color == ai_color:
@@ -3945,6 +3982,23 @@ def main():
 
                     # 3. Reset the stopwatch for the next turn
                     ai_thinking_timer = 0
+
+            #network
+            elif ONLINE_CONNECTION is not None and not is_paused and game_over_btn_rect is None:
+                # If it's NOT our turn, we must be waiting for the internet!
+                if BOARD.active_color.value.upper() != ONLINE_CONNECTION.color.upper():
+
+                    incoming_san = ONLINE_CONNECTION.peek_mailbox()
+                    if incoming_san:
+                        print(f"Enemy played: {incoming_san}")
+                        # Use your reverse SAN trick to find the exact Move object
+                        enemy_move = get_move_from_san(BOARD, incoming_san)
+
+                        if enemy_move:
+                            # Fly the ghost!
+                            moving_piece = BOARD.get_piece_at(enemy_move.from_pos)
+                            animate_move(moving_piece, enemy_move.from_pos, enemy_move.to_pos)
+                            BOARD.execute_move(enemy_move)
 
 
 
