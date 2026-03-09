@@ -59,19 +59,25 @@ def handle_client(conn, player_id):
     conn.close()
 
 
+
+def main_game_loop():
+    """The Main Loop: The Referee standing at the door waiting for knocks."""
 # The Main Loop: The Referee standing at the door waiting for knocks
-while True:
-    conn, addr = server.accept()
-    print(f"[REFEREE] New connection established from {addr}")
+    while True:
+        conn, addr = server.accept()
+        print(f"[REFEREE] New connection established from {addr}")
 
-    if len(clients) >= 2:
-        print("[REFEREE] Game is full. Rejecting extra connection.")
-        conn.close()
-        continue
+        if len(clients) >= 2:
+            print("[REFEREE] Game is full. Rejecting extra connection.")
+            conn.close()
+            continue
 
-    clients.append(conn)
+        clients.append(conn)
 
-    # Spawn a new thread (worker) so the server doesn't freeze while waiting for a move
-    # The first person gets id 0 (White), the second gets id 1 (Black)
-    thread = threading.Thread(target=handle_client, args=(conn, len(clients) - 1))
-    thread.start()
+        # Spawn a new thread (worker) so the server doesn't freeze while waiting for a move
+        # The first person gets id 0 (White), the second gets id 1 (Black)
+        thread = threading.Thread(target=handle_client, args=(conn, len(clients) - 1))
+        thread.start()
+
+if __name__ == "__main__":
+    main_game_loop()

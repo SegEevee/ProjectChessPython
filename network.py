@@ -13,20 +13,25 @@ class Network:
     def connect(self):
         try:
             self.client.connect(self.addr)
-            # The Mailbox Trick!
-            # This tells Python NOT to freeze if there is no message waiting.
-            self.client.setblocking(False)
 
-            # The first thing the server says is our color
-            # We must force a tiny wait here just for the initial connection handshake
-            self.client.settimeout(2.0)
+            # 1. Get your color
+            self.client.settimeout(5.0)  # Give it time to talk
             color = self.client.recv(2048).decode()
-            self.client.setblocking(False)  # Go back to non-blocking!
-            return color
-        except Exception as e:
-            print(f"Failed to connect: {e}")
-            return None
+            print(f"I am playing as: {color}")
 
+            # 2. WAIT FOR START SIGNAL
+            # This will 'freeze' here until the second player joins the server!
+            print("Waiting for opponent...")
+            start_signal = self.client.recv(2048).decode()
+
+            if start_signal == "START_GAME":
+                print("Game is LIVE!")
+                self.client.setblocking(False)  # Go back to non-blocking for the game
+                return color
+
+        except Exception as e:
+            print(f"Connection failed: {e}")
+            return None
     def send_move(self, san_string):
         try:
             self.client.send(str.encode(san_string))
