@@ -146,13 +146,13 @@ while True:
 
     assigned_color = None
 
-    # RECONNECTION LOGIC: Did this IP sit down previously?
-    if MATCH.seats["White"] == ip_address:
+    # 1. RECONNECTION LOGIC: Does this IP own a seat, AND is the seat currently empty?
+    if MATCH.seats["White"] == ip_address and MATCH.connections["White"] is None:
         assigned_color = "White"
-    elif MATCH.seats["Black"] == ip_address:
+    elif MATCH.seats["Black"] == ip_address and MATCH.connections["Black"] is None:
         assigned_color = "Black"
     else:
-        # NEW PLAYER LOGIC: Find an empty seat
+        # 2. NEW PLAYER LOGIC: Find an empty seat (Even if the IP is identical!)
         if MATCH.seats["White"] is None:
             assigned_color = "White"
         elif MATCH.seats["Black"] is None:
