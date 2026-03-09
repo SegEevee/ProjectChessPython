@@ -25,6 +25,8 @@ class ChessMatch:
         self.clocks = {"White": STARTING_TIME, "Black": STARTING_TIME}
         self.last_clock_update = 0.0
 
+        self.rematch_votes = {"White": False, "Black": False}
+
     def update_clocks(self):
         """The Master Stopwatch. Updates the active player's time."""
         if self.status != "PLAYING" or self.last_clock_update == 0:
@@ -116,10 +118,62 @@ def handle_client(conn, addr, my_color):
                 if MATCH.connections[other_color]:
                     MATCH.connections[other_color].sendall(str.encode(f"MOVE|{san}"))
 
-            elif msg == "RESIGN":
+
+            elif msg.startswith("RESIGN|"):
+
                 print(f"[GAME] {my_color} has resigned!")
+
+                MATCH.status = "GAME_OVER"
+
+                MATCH.broadcast(f"RESIGN|{my_color}")
+
+
+            elif msg.startswith("DRAW_OFFER|"):
+
+                print(f"[GAME] {my_color} offered a draw.")
+
+                other_color = "Black" if my_color == "White" else "White"
+
+                # Pass the note to the other player
+
+                if MATCH.connections[other_color]:
+                    MATCH.connections[other_color].sendall(str.encode(f"DRAW_OFFER|{my_color}"))
+
+
+            elif msg.startswith("DRAW_ACCEPT|"):
+
+                print(f"[GAME] Draw accepted by {my_color}!")
+
+                MATCH.status = "GAME_OVER"
+
+                # Shout to everyone that it's a tie!
+
+                MATCH.broadcast("DRAW|")
+
+            elif msg.startswith("LEAVE|"):
+                other_color = "Black" if my_color == "White" else "White"
+                print(f"[GAME] Color {my_color} has left the game! {other_color} wins!")
                 MATCH.status = "GAME_OVER"
                 MATCH.broadcast(f"RESIGN|{my_color}")
+
+            # --- NEW: THE REMATCH VOTE ---
+            elif msg.startswith("REMATCH|"):
+                MATCH.rematch_votes[my_color] = True
+                print(f"[GAME] {my_color} voted for a rematch.")
+
+                # If both players voted yes, wipe the board!
+                if MATCH.rematch_votes["White"] and MATCH.rematch_votes["Black"]:
+                    print("[REFEREE] Both players agreed to a rematch! Resetting board...")
+                    MATCH.move_history = []
+                    MATCH.active_turn = "White"
+                    MATCH.clocks = {"White": STARTING_TIME, "Black": STARTING_TIME}
+                    MATCH.status = "PLAYING"
+                    MATCH.rematch_votes = {"White": False, "Black": False}  # Clear the ballots
+                    MATCH.last_clock_update = time.time()
+                    MATCH.broadcast("START|")
+
+
+
 
         except Exception as e:
             print(f"[ERROR] Connection lost with {my_color}: {e}")
