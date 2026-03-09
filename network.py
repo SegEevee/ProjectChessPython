@@ -1,9 +1,9 @@
 import socket
 
-
+MASTER_ADDRESS = "192.168.68.64"
 
 class Network:
-    def __init__(self, ip_address="192.168.68.64"):
+    def __init__(self, ip_address=MASTER_ADDRESS):
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server = ip_address
         self.port = 5555
