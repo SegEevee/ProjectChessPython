@@ -1,10 +1,11 @@
 import socket
 
 
+
 class Network:
-    def __init__(self, ip_address="127.0.0.1"):
+    def __init__(self, ip_address="192.168.68.64"):
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server = ip_address  # 127.0.0.1 means "My Own Computer" for testing
+        self.server = ip_address
         self.port = 5555
         self.addr = (self.server, self.port)
         self.color = self.connect()
