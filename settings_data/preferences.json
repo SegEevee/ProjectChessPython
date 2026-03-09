@@ -2,7 +2,7 @@
     "game_counter": 2,
     "auto_save": true,
     "starting_time": 1800,
-    "game_mode": "Online",
+    "game_mode": "Multiplayer",
     "player_color": "Black",
     "bot_depth": 4,
     "bot_thinking_time": 0.5,

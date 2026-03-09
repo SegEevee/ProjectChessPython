@@ -1,60 +1,77 @@
 import socket
 import threading
 
-# 0.0.0.0 means "Listen to anyone on my Wi-Fi router"
+# The "Open All Doors" address. This allows local and Wi-Fi connections simultaneously.
 SERVER_IP = "0.0.0.0"
 PORT = 5555
 
+# 1. Create the Phone
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+# 2. Plug the Phone into the Wall
 try:
     server.bind((SERVER_IP, PORT))
 except socket.error as e:
-    print(f"Error binding to port: {e}")
+    print(f"[ERROR] Failed to bind to port {PORT}. Is another server already running?")
+    print(str(e))
+    exit()
 
+# 3. Turn the Ringer On (Allow up to 2 people in the waiting room)
 server.listen(2)
-print("Referee is waiting for 2 players to connect...")
+print(f"[REFEREE] Awake and listening on port {PORT}...")
 
-players = []
+clients = []
+COLORS = ["White", "Black"]
 
 
 def handle_client(conn, player_id):
-    # Tell the player what color they are! Player 0 is White, Player 1 is Black.
-    color = "White" if player_id == 0 else "Black"
+    """The Worker assigned to talk to a specific player."""
+    color = COLORS[player_id]
+
+    # Immediately tell the game client what color it is playing!
     conn.send(str.encode(color))
+    print(f"[REFEREE] Assigned {color} to Player {player_id + 1}")
 
     while True:
         try:
-            # Wait for a message (up to 2048 bytes)
-            data = conn.recv(2048).decode('utf-8')
-
+            # Wait for the player to send a move
+            data = conn.recv(2048)
             if not data:
-                print("Player disconnected.")
+                print(f"[REFEREE] Player {player_id + 1} ({color}) disconnected.")
                 break
 
-            print(f"Received from {color}: {data}")
+            msg = data.decode("utf-8")
+            print(f"[MOVE] {color} played: {msg}")
 
-            # Send the move to the OTHER player
-            other_player_id = 1 if player_id == 0 else 0
-            if len(players) > other_player_id:
-                players[other_player_id].send(str.encode(data))
+            # Forward the move to the OTHER player (The Magic Mirror)
+            for c in clients:
+                if c != conn:
+                    c.sendall(data)
 
-        except:
+        except Exception as e:
+            print(f"[ERROR] Connection lost with {color}: {e}")
             break
 
-    print(f"Lost connection to {color}")
-    players.remove(conn)
+    # Cleanup when someone rage quits
+    print(f"[REFEREE] Closing connection for Player {player_id + 1}")
+    if conn in clients:
+        clients.remove(conn)
     conn.close()
 
 
-current_player = 0
+# The Main Loop: The Referee standing at the door waiting for knocks
 while True:
-    # The Referee waits for someone to knock on the door
     conn, addr = server.accept()
-    print(f"Connected to: {addr}")
+    print(f"[REFEREE] New connection established from {addr}")
 
-    players.append(conn)
+    if len(clients) >= 2:
+        print("[REFEREE] Game is full. Rejecting extra connection.")
+        conn.close()
+        continue
 
-    # Give them a dedicated thread (a helper) to listen to them forever
-    threading.Thread(target=handle_client, args=(conn, current_player)).start()
-    current_player += 1
+    clients.append(conn)
+
+    # Spawn a new thread (worker) so the server doesn't freeze while waiting for a move
+    # The first person gets id 0 (White), the second gets id 1 (Black)
+    thread = threading.Thread(target=handle_client, args=(conn, len(clients) - 1))
+    thread.start()
