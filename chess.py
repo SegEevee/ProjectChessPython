@@ -325,7 +325,8 @@ UNDO_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, PAUSE_BTN_RECT.bottom + 10, 150, 
 RESET_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, UNDO_BTN_RECT.bottom + 10, 150, 40)
 MENU_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, RESET_BTN_RECT.bottom + 10, 150, 40)
 NOTATION_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, MENU_BTN_RECT.bottom + 10, 150, 40)
-SAVE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, NOTATION_BTN_RECT.bottom + 10, 150, 40)
+FLIP_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, NOTATION_BTN_RECT.bottom + 10, 150, 40)
+SAVE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, FLIP_BTN_RECT.bottom + 10, 150, 40)
 
 # --- CLOCK RECTS ---
 # --- CLOCK RECTS (Shifted to RIGHT_MENU_X) ---
@@ -345,6 +346,14 @@ W_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 120, 40, 40)
 #</editor-fold>
 
 # <editor-fold desc="HELPERS (notation / coordinates)">
+
+def get_visual_row_col(row, col):
+    """The Magic Mirror: Flips the coordinates only for the camera."""
+    global BOARD_FLIPPED
+    if BOARD_FLIPPED:
+        return 7 - row, 7 - col
+    return row, col
+
 def notation_to_row_col(pos: str):
     pos = pos.strip().lower()
     col = ord(pos[0]) - ord('a')
@@ -357,9 +366,15 @@ def row_col_to_notation(row: int, col: int):
 
 
 def pixel_to_squarepos(mouse_pos):
+    global BOARD_FLIPPED
     x, y = mouse_pos
     col = (x - BOARD_X_OFFSET) // SQUARE_SIZE
     row = y // SQUARE_SIZE
+
+    if BOARD_FLIPPED:
+        col = 7 - col
+        row = 7 - row
+
     if 0 <= col < 8 and 0 <= row < 8:
         return SquarePosition(row=row, col=col)
     return None
@@ -2020,7 +2035,7 @@ def draw_saved_games_page(screen, games, scroll_y, return_rect,import_rect):
 
 
 def draw_paste_pgn_page(screen, status_msg: str, status_color: tuple, is_valid: bool, paste_rect, save_rect,
-                        return_rect):
+                        return_rect, input_rect, user_text: str, active: bool):
     # 1. Background
     screen.fill((30, 30, 35))
     for row in range(8):
@@ -2033,22 +2048,41 @@ def draw_paste_pgn_page(screen, status_msg: str, status_color: tuple, is_valid: 
     font_title = pygame.font.SysFont("Arial", 60, bold=True)
     font_btn = pygame.font.SysFont("Arial", 30, bold=True)
     font_status = pygame.font.SysFont("Arial", 24, bold=True)
+    font_input = pygame.font.SysFont("Arial", 24, bold=False)
 
     # 2. Title & Status Message
     title_surf = font_title.render("IMPORT PGN", True, (255, 255, 255))
-    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 60)))
 
     status_surf = font_status.render(status_msg, True, status_color)
-    screen.blit(status_surf, status_surf.get_rect(center=(SCREEN_WIDTH // 2, 160)))
+    screen.blit(status_surf, status_surf.get_rect(center=(SCREEN_WIDTH // 2, 130)))
 
-    # 3. Paste Button (Blue)
+    # 3. The Live Text Input Box
+    # Blue if active, dark grey if not
+    box_color = (100, 150, 200) if active else (50, 50, 60)
+    pygame.draw.rect(screen, box_color, input_rect, border_radius=5)
+    pygame.draw.rect(screen, (255, 255, 255), input_rect, 2, border_radius=5)
+
+    # The Scissors (Clipping): Only draw text INSIDE the box!
+    screen.set_clip(input_rect)
+    text_surf = font_input.render(user_text, True, (255, 255, 255))
+
+    # If text is too long, slide it to the left so we always see the end of what we are typing
+    text_x = input_rect.x + 10
+    if text_surf.get_width() > input_rect.width - 20:
+        text_x = input_rect.right - text_surf.get_width() - 10
+
+    screen.blit(text_surf, (text_x, input_rect.y + 10))
+    screen.set_clip(None)  # Take the scissors away
+
+    # 4. Paste Button (Blue)
     p_color = (100, 150, 200) if paste_rect.collidepoint(mouse_pos) else (80, 120, 160)
     pygame.draw.rect(screen, p_color, paste_rect, border_radius=15)
     pygame.draw.rect(screen, (255, 255, 255), paste_rect, 3, border_radius=15)
     p_txt = font_btn.render("PASTE FROM CLIPBOARD", True, (255, 255, 255))
     screen.blit(p_txt, p_txt.get_rect(center=paste_rect.center))
 
-    # 4. Save Button (Only Green if valid, otherwise dark grey)
+    # 5. Save Button (Only Green if valid, otherwise dark grey)
     if is_valid:
         s_color = (80, 200, 80) if save_rect.collidepoint(mouse_pos) else (60, 150, 60)
     else:
@@ -2058,7 +2092,7 @@ def draw_paste_pgn_page(screen, status_msg: str, status_color: tuple, is_valid: 
     s_txt = font_btn.render("SAVE GAME", True, (255, 255, 255) if is_valid else (150, 150, 150))
     screen.blit(s_txt, s_txt.get_rect(center=save_rect.center))
 
-    # 5. Return Button
+    # 6. Return Button
     ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
     pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
     pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
@@ -2113,21 +2147,24 @@ def draw_replay_side_menu(screen, show_notation: bool, current_move_text: str):
     m_txt = font_btn.render("Return to Menu", True, (255, 255, 255))
     screen.blit(m_txt, m_txt.get_rect(center=REPLAY_MENU_BTN.center))
 
+
 def draw_board(screen, show_notation: bool = False):
     for row in range(8):
         for col in range(8):
             is_light_square = (row + col) % 2 == 0
             color = LIGHT if is_light_square else DARK
-            # THE SHIFT
-            x_pos = BOARD_X_OFFSET + (col * SQUARE_SIZE)
-            y_pos = row * SQUARE_SIZE
+
+            # THE MAGIC MIRROR
+            v_row, v_col = get_visual_row_col(row, col)
+
+            x_pos = BOARD_X_OFFSET + (v_col * SQUARE_SIZE)
+            y_pos = v_row * SQUARE_SIZE
             pygame.draw.rect(screen, color, (x_pos, y_pos, SQUARE_SIZE, SQUARE_SIZE))
 
             if show_notation and NOTATION_FONT is not None:
                 notation_text = row_col_to_notation(row, col).lower()
                 text_color = DARK if is_light_square else LIGHT
                 text_surface = NOTATION_FONT.render(notation_text, True, text_color)
-                # THE SHIFT
                 screen.blit(text_surface, (x_pos + 4, y_pos + SQUARE_SIZE - 18))
 
 def draw_side_menu(screen, show_notation: bool,is_paused:bool):
@@ -2207,6 +2244,12 @@ def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     pygame.draw.rect(screen, (200, 200, 200), NOTATION_BTN_RECT, 2)
     toggle_txt = font_small.render("Notation: ON" if show_notation else "Notation: OFF", True, (255, 255, 255))
     screen.blit(toggle_txt, toggle_txt.get_rect(center=NOTATION_BTN_RECT.center))
+
+    flip_color = (180, 140, 80) if FLIP_BTN_RECT.collidepoint(mouse_pos) else (150, 110, 60)
+    pygame.draw.rect(screen, flip_color, FLIP_BTN_RECT)
+    pygame.draw.rect(screen, (200, 200, 200), FLIP_BTN_RECT, 2)
+    flip_txt = font_small.render("Flip Board", True, (255, 255, 255))
+    screen.blit(flip_txt, flip_txt.get_rect(center=FLIP_BTN_RECT.center))
 
     # 6. The Save Game Button
     if SAVE_BTN_RECT.collidepoint(mouse_pos):
@@ -2332,10 +2375,13 @@ def draw_promotion_menu(screen, color: ChessColor, cache):
 def draw_piece(screen, piece: ChessPiece, cache):
     if piece.position is None: return
     row, col = piece.position.row, piece.position.col
+
+    # THE MAGIC MIRROR
+    v_row, v_col = get_visual_row_col(row, col)
+
     img = get_piece_image(piece, cache)
-    # THE SHIFT
-    center_x = BOARD_X_OFFSET + (col * SQUARE_SIZE + SQUARE_SIZE // 2)
-    center_y = row * SQUARE_SIZE + SQUARE_SIZE // 2
+    center_x = BOARD_X_OFFSET + (v_col * SQUARE_SIZE + SQUARE_SIZE // 2)
+    center_y = v_row * SQUARE_SIZE + SQUARE_SIZE // 2
     rect = img.get_rect(center=(center_x, center_y))
     screen.blit(img, rect)
 
@@ -2353,9 +2399,11 @@ def highlight_square(screen, square: SquarePosition, color: tuple, alpha: int = 
     rgba_color = (color[0], color[1], color[2], alpha)
     pygame.draw.rect(glass_pane, rgba_color, glass_pane.get_rect(), width=thickness)
 
-    # THE SHIFT
-    x = BOARD_X_OFFSET + (square.col * SQUARE_SIZE)
-    y = square.row * SQUARE_SIZE
+    # THE MAGIC MIRROR
+    v_row, v_col = get_visual_row_col(square.row, square.col)
+
+    x = BOARD_X_OFFSET + (v_col * SQUARE_SIZE)
+    y = v_row * SQUARE_SIZE
     screen.blit(glass_pane, (x, y))
 
 def get_square_center(pos: SquarePosition):
@@ -2364,16 +2412,19 @@ def get_square_center(pos: SquarePosition):
     y = pos.row * SQUARE_SIZE + SQUARE_SIZE // 2
     return x, y
 
-
 def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition, color, padding=15, thickness=5):
-    start_x = BOARD_X_OFFSET + (start_square.col * SQUARE_SIZE + SQUARE_SIZE // 2)
-    start_y = start_square.row * SQUARE_SIZE + SQUARE_SIZE // 2
+    # THE MAGIC MIRROR
+    v_start_r, v_start_c = get_visual_row_col(start_square.row, start_square.col)
+    v_end_r, v_end_c = get_visual_row_col(end_square.row, end_square.col)
 
-    end_x = BOARD_X_OFFSET + (end_square.col * SQUARE_SIZE + SQUARE_SIZE // 2)
-    end_y = end_square.row * SQUARE_SIZE + SQUARE_SIZE // 2
+    start_x = BOARD_X_OFFSET + (v_start_c * SQUARE_SIZE + SQUARE_SIZE // 2)
+    start_y = v_start_r * SQUARE_SIZE + SQUARE_SIZE // 2
 
-    dx_squares = abs(end_square.col - start_square.col)
-    dy_squares = abs(end_square.row - start_square.row)
+    end_x = BOARD_X_OFFSET + (v_end_c * SQUARE_SIZE + SQUARE_SIZE // 2)
+    end_y = v_end_r * SQUARE_SIZE + SQUARE_SIZE // 2
+
+    dx_squares = abs(v_end_c - v_start_c)
+    dy_squares = abs(v_end_r - v_start_r)
 
     is_knight_move = (dx_squares == 2 and dy_squares == 1) or (dx_squares == 1 and dy_squares == 2)
 
@@ -2381,52 +2432,34 @@ def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition,
     arrow_length = 15
 
     if is_knight_move:
-        # --- THE KNIGHT LOGIC ---
-        # Determine the elbow/corner of the L-shape: Always move the 2-squares FIRST
         if dx_squares == 2:
-            # Move 2 squares horizontally first, then 1 vertically
             corner_x = end_x
             corner_y = start_y
         else:
-            # Move 2 squares vertically first, then 1 horizontally
             corner_x = start_x
             corner_y = end_y
 
-        # 1. The angle from the corner to the end square (for the arrowhead)
         end_angle = math.atan2(end_y - corner_y, end_x - corner_x)
-
-        # 2. The angle from the start square to the corner (for start padding)
         start_angle = math.atan2(corner_y - start_y, corner_x - start_x)
 
-        # 3. Apply padding so lines don't start exactly in the center of the piece
         adj_start_x = start_x + padding * math.cos(start_angle)
         adj_start_y = start_y + padding * math.sin(start_angle)
 
         adj_end_x = end_x - padding * math.cos(end_angle)
         adj_end_y = end_y - padding * math.sin(end_angle)
 
-        # 4. Snip the stick so it doesn't pierce the arrowhead
         stick_end_x = adj_end_x - snip_length * math.cos(end_angle)
         stick_end_y = adj_end_y - snip_length * math.sin(end_angle)
 
-        # Draw the L-Shape Lines
         pygame.draw.line(screen, color, (adj_start_x, adj_start_y), (corner_x, corner_y), thickness)
         pygame.draw.line(screen, color, (corner_x, corner_y), (stick_end_x, stick_end_y), thickness)
 
-        # Draw the Arrowhead pointing from the corner
         tip = (adj_end_x, adj_end_y)
-        left = (
-            adj_end_x - arrow_length * math.cos(end_angle - math.pi / 6),
-            adj_end_y - arrow_length * math.sin(end_angle - math.pi / 6)
-        )
-        right = (
-            adj_end_x - arrow_length * math.cos(end_angle + math.pi / 6),
-            adj_end_y - arrow_length * math.sin(end_angle + math.pi / 6)
-        )
+        left = (adj_end_x - arrow_length * math.cos(end_angle - math.pi / 6), adj_end_y - arrow_length * math.sin(end_angle - math.pi / 6))
+        right = (adj_end_x - arrow_length * math.cos(end_angle + math.pi / 6), adj_end_y - arrow_length * math.sin(end_angle + math.pi / 6))
         pygame.draw.polygon(screen, color, [tip, left, right])
 
     else:
-        # --- NORMAL STRAIGHT ARROW LOGIC ---
         angle = math.atan2(end_y - start_y, end_x - start_x)
 
         adj_start_x = start_x + padding * math.cos(angle)
@@ -2441,15 +2474,10 @@ def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition,
         pygame.draw.line(screen, color, (adj_start_x, adj_start_y), (stick_end_x, stick_end_y), thickness)
 
         tip = (adj_end_x, adj_end_y)
-        left = (
-            adj_end_x - arrow_length * math.cos(angle - math.pi / 6),
-            adj_end_y - arrow_length * math.sin(angle - math.pi / 6)
-        )
-        right = (
-            adj_end_x - arrow_length * math.cos(angle + math.pi / 6),
-            adj_end_y - arrow_length * math.sin(angle + math.pi / 6)
-        )
+        left = (adj_end_x - arrow_length * math.cos(angle - math.pi / 6), adj_end_y - arrow_length * math.sin(angle - math.pi / 6))
+        right = (adj_end_x - arrow_length * math.cos(angle + math.pi / 6), adj_end_y - arrow_length * math.sin(angle + math.pi / 6))
         pygame.draw.polygon(screen, color, [tip, left, right])
+
 def draw_game_over_screen(screen, winner_color: ChessColor, is_draw=False):
     # 1. Dim the background so the board looks "finished" (Shifted to the center!)
     dim_surface = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
@@ -2508,7 +2536,7 @@ SCREEN = None
 PLAYERS = {}
 CLOCKS = {}
 
-
+BOARD_FLIPPED = False
 BOARD = Board()
 
 PLAYERS[ChessColor.WHITE] = Player(BOARD, ChessColor.WHITE)
@@ -3198,18 +3226,21 @@ def run_replay_screen(pgn_string: str):
             pygame.display.flip()
             pygame_clock.tick(FPS)
 
-
 def run_paste_pgn_screen():
     global SCREEN
     pygame_clock = pygame.time.Clock()
     pygame.scrap.init()
 
-    paste_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, 220, 400, 60)
-    save_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, 320, 400, 60)
+    # Hitboxes pushed down slightly to fit the new text box
+    input_rect = pygame.Rect((SCREEN_WIDTH // 2) - 300, 180, 600, 50)
+    paste_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, 260, 400, 60)
+    save_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, 350, 400, 60)
     return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
 
-    pasted_text = ""
-    status_msg = "Click Paste to load from clipboard"
+    user_text = ""
+    input_active = False
+
+    status_msg = "Type or Paste to load a PGN"
     status_color = (200, 200, 200)
     is_valid = False
 
@@ -3218,7 +3249,14 @@ def run_paste_pgn_screen():
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
 
+            # --- MOUSE CLICKS ---
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Toggle the text box on or off based on where we clicked
+                if input_rect.collidepoint(event.pos):
+                    input_active = True
+                else:
+                    input_active = False
+
                 # 1. Return
                 if return_rect.collidepoint(event.pos):
                     return
@@ -3227,10 +3265,9 @@ def run_paste_pgn_screen():
                 elif paste_rect.collidepoint(event.pos):
                     raw_bytes = pygame.scrap.get(pygame.SCRAP_TEXT)
                     if raw_bytes:
-                        # Clean invisible Windows clipboard junk and decode it
-                        pasted_text = raw_bytes.replace(b'\x00', b'').decode('utf-8', errors='ignore').strip()
-                        # Send it to the Shadow Board!
-                        if is_pgn_valid(pasted_text):
+                        user_text = raw_bytes.replace(b'\x00', b'').decode('utf-8', errors='ignore').strip()
+                        # Live Validation!
+                        if is_pgn_valid(user_text):
                             status_msg = "Valid PGN! Ready to save."
                             status_color = (80, 200, 80)
                             is_valid = True
@@ -3244,12 +3281,35 @@ def run_paste_pgn_screen():
 
                 # 3. Save Button
                 elif save_rect.collidepoint(event.pos) and is_valid:
-                    save_custom_pgn(pasted_text)
+                    save_custom_pgn(user_text)
                     return  # Exit the room instantly so the Saved Games list refreshes!
 
-        draw_paste_pgn_page(SCREEN, status_msg, status_color, is_valid, paste_rect, save_rect, return_rect)
+            # --- KEYBOARD TYPING ---
+            elif event.type == pygame.KEYDOWN:
+                if input_active:
+                    if event.key == pygame.K_BACKSPACE:
+                        user_text = user_text[:-1] # Erase the last letter
+                    elif event.unicode.isprintable():
+                        user_text += event.unicode # Add the new letter (safely)
+
+                    # Live Validation on EVERY keystroke!
+                    if user_text.strip() == "":
+                        status_msg = "Type or Paste to load a PGN"
+                        status_color = (200, 200, 200)
+                        is_valid = False
+                    elif is_pgn_valid(user_text):
+                        status_msg = "Valid PGN! Ready to save."
+                        status_color = (80, 200, 80)
+                        is_valid = True
+                    else:
+                        status_msg = "Typing... (Invalid PGN)"
+                        status_color = (200, 150, 50) # Yellow while typing an incomplete move
+                        is_valid = False
+
+        draw_paste_pgn_page(SCREEN, status_msg, status_color, is_valid, paste_rect, save_rect, return_rect, input_rect, user_text, input_active)
         pygame.display.flip()
         pygame_clock.tick(FPS)
+
 
 def run_saved_games_screen():
     global SCREEN
@@ -3413,7 +3473,7 @@ def run_home_screen():
 # <editor-fold desc="MAIN">
 
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT
+    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED
 
     load_preferences()
     pygame.init()
@@ -3443,20 +3503,20 @@ def main():
     }
 
     def animate_move(piece, from_sq, to_sq):
-        """Sets up the ghost piece for the journey."""
         nonlocal animation_state
         if PREFERENCES["animation_time"] <= 0:
-            return  # Skip if user wants instant teleportation
+            return
 
-        # Snap any existing animation to the end so they don't overlap
         if animation_state["piece"] is not None:
             animation_state["progress"] = 1.0
 
-        # Calculate pixel centers for the start and end
-        start_x = BOARD_X_OFFSET + (from_sq.col * SQUARE_SIZE + SQUARE_SIZE // 2)
-        start_y = from_sq.row * SQUARE_SIZE + SQUARE_SIZE // 2
-        end_x = BOARD_X_OFFSET + (to_sq.col * SQUARE_SIZE + SQUARE_SIZE // 2)
-        end_y = to_sq.row * SQUARE_SIZE + SQUARE_SIZE // 2
+        v_start_r, v_start_c = get_visual_row_col(from_sq.row, from_sq.col)
+        v_end_r, v_end_c = get_visual_row_col(to_sq.row, to_sq.col)
+
+        start_x = BOARD_X_OFFSET + (v_start_c * SQUARE_SIZE + SQUARE_SIZE // 2)
+        start_y = v_start_r * SQUARE_SIZE + SQUARE_SIZE // 2
+        end_x = BOARD_X_OFFSET + (v_end_c * SQUARE_SIZE + SQUARE_SIZE // 2)
+        end_y = v_end_r * SQUARE_SIZE + SQUARE_SIZE // 2
 
         animation_state.update({
             "piece": piece,
@@ -3487,7 +3547,7 @@ def main():
     # ==========================================
     def reset_match():
         nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused, has_auto_saved, ai_thinking_timer, animation_state,ai_color
-
+        global BOARD_FLIPPED
         PLAYERS[ChessColor.WHITE].lost = False
         PLAYERS[ChessColor.BLACK].lost = False
         BOARD.is_draw = False
@@ -3518,6 +3578,11 @@ def main():
         if PREFERENCES["game_mode"] == "Singleplayer":
             ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
         else: ai_color = None
+
+        if PREFERENCES["game_mode"] == "Singleplayer" and PREFERENCES["player_color"] == "Black":
+            BOARD_FLIPPED = True
+        else:
+            BOARD_FLIPPED = False
 
         play_music("board_music")
 
@@ -3598,6 +3663,10 @@ def main():
 
                     if NOTATION_BTN_RECT.collidepoint(event.pos):
                         show_notation = not show_notation
+                        continue
+
+                    if FLIP_BTN_RECT.collidepoint(event.pos):
+                        BOARD_FLIPPED = not BOARD_FLIPPED
                         continue
 
                         # --- NEW: SIDEBAR SAVE BUTTON ---
