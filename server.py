@@ -6,6 +6,7 @@ import json
 # --- CONFIG ---
 SERVER_IP = "0.0.0.0"
 PORT = 5555
+UDP_PORT = 5556
 STARTING_TIME = 300.0  # 5 minutes in seconds
 
 
@@ -78,6 +79,27 @@ except socket.error as e:
     print(f"[FATAL] Port {PORT} is blocked! {e}")
     exit()
 
+
+def broadcast_presence():
+    """The Megaphone: Screams the server's IP address to the whole Wi-Fi network every second."""
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+    while True:
+        try:
+            # Count the empty chairs
+            seats_taken = sum(1 for v in MATCH.connections.values() if v is not None)
+            empty_seats = 2 - seats_taken
+
+            # Scream the message! Format: CHESS_SERVER | Room Name | Empty Seats
+            msg = f"CHESS_SERVER|Local Server|{empty_seats}"
+            udp.sendto(msg.encode('utf-8'), ('<broadcast>', UDP_PORT))
+        except Exception as e:
+            pass
+
+        time.sleep(1)
+
+
 def handle_client(conn, addr, my_color):
     """The worker assigned to listen to one specific player."""
     global MATCH
@@ -107,47 +129,29 @@ def handle_client(conn, addr, my_color):
                 san = msg.split("|")[1]
                 print(f"[GAME] {my_color} played: {san}")
 
-                # Update the Referee's notebook
                 MATCH.update_clocks()
                 MATCH.move_history.append(san)
                 MATCH.active_turn = "Black" if MATCH.active_turn == "White" else "White"
                 MATCH.last_clock_update = time.time()
 
-                # Forward the move to the OTHER player
                 other_color = "Black" if my_color == "White" else "White"
                 if MATCH.connections[other_color]:
                     MATCH.connections[other_color].sendall(str.encode(f"MOVE|{san}"))
 
-
             elif msg.startswith("RESIGN|"):
-
                 print(f"[GAME] {my_color} has resigned!")
-
                 MATCH.status = "GAME_OVER"
-
                 MATCH.broadcast(f"RESIGN|{my_color}")
 
-
             elif msg.startswith("DRAW_OFFER|"):
-
                 print(f"[GAME] {my_color} offered a draw.")
-
                 other_color = "Black" if my_color == "White" else "White"
-
-                # Pass the note to the other player
-
                 if MATCH.connections[other_color]:
                     MATCH.connections[other_color].sendall(str.encode(f"DRAW_OFFER|{my_color}"))
 
-
             elif msg.startswith("DRAW_ACCEPT|"):
-
                 print(f"[GAME] Draw accepted by {my_color}!")
-
                 MATCH.status = "GAME_OVER"
-
-                # Shout to everyone that it's a tie!
-
                 MATCH.broadcast("DRAW|")
 
             elif msg.startswith("LEAVE|"):
@@ -156,51 +160,46 @@ def handle_client(conn, addr, my_color):
                 MATCH.status = "GAME_OVER"
                 MATCH.broadcast(f"RESIGN|{my_color}")
 
-            # --- NEW: THE REMATCH VOTE ---
             elif msg.startswith("REMATCH|"):
                 MATCH.rematch_votes[my_color] = True
                 print(f"[GAME] {my_color} voted for a rematch.")
 
-                # If both players voted yes, wipe the board!
                 if MATCH.rematch_votes["White"] and MATCH.rematch_votes["Black"]:
                     print("[REFEREE] Both players agreed to a rematch! Resetting board...")
                     MATCH.move_history = []
                     MATCH.active_turn = "White"
                     MATCH.clocks = {"White": STARTING_TIME, "Black": STARTING_TIME}
                     MATCH.status = "PLAYING"
-                    MATCH.rematch_votes = {"White": False, "Black": False}  # Clear the ballots
+                    MATCH.rematch_votes = {"White": False, "Black": False}
                     MATCH.last_clock_update = time.time()
                     MATCH.broadcast("START|")
-
-
-
 
         except Exception as e:
             print(f"[ERROR] Connection lost with {my_color}: {e}")
             break
 
-    # ==========================================
-    # NOTICE: THE INDENTATION MOVES BACK HERE
-    # ==========================================
     # --- DISCONNECT HANDLING ---
     print(f"[DISCONNECT] {my_color} ({addr[0]}) dropped the call.")
     MATCH.connections[my_color] = None
 
-    # If the game was active, tell the other guy to wait
     other_color = "Black" if my_color == "White" else "White"
     if MATCH.status == "PLAYING" and MATCH.connections[other_color]:
         try:
             MATCH.connections[other_color].sendall(str.encode("OPPONENT_DISCONNECTED|"))
         except:
-            pass  # They might have disconnected at the exact same millisecond
+            pass
 
     conn.close()
 
     # --- THE JANITOR ---
-    # If both chairs are empty, sweep the floors and reset the match completely!
     if MATCH.connections["White"] is None and MATCH.connections["Black"] is None:
         print("[REFEREE] The room is empty. Sweeping the floors and resetting for a new match!")
         MATCH = ChessMatch()
+
+
+# --- START THE MEGAPHONE ---
+shouter = threading.Thread(target=broadcast_presence, daemon=True)
+shouter.start()
 
 # --- THE FRONT DOOR ---
 while True:
@@ -210,33 +209,27 @@ while True:
 
     assigned_color = None
 
-    # 1. RECONNECTION LOGIC: Does this IP own a seat, AND is the seat currently empty?
     if MATCH.seats["White"] == ip_address and MATCH.connections["White"] is None:
         assigned_color = "White"
     elif MATCH.seats["Black"] == ip_address and MATCH.connections["Black"] is None:
         assigned_color = "Black"
     else:
-        # 2. NEW PLAYER LOGIC: Find an empty seat (Even if the IP is identical!)
         if MATCH.seats["White"] is None:
             assigned_color = "White"
         elif MATCH.seats["Black"] is None:
             assigned_color = "Black"
 
-    # THE BOUNCER: Room is full, and you don't own a seat!
     if assigned_color is None:
         print(f"[BOUNCER] Rejected {ip_address}. Room is full.")
         conn.send(str.encode("REJECT|ROOM_FULL"))
         conn.close()
         continue
 
-    # Seat the player
     MATCH.seats[assigned_color] = ip_address
     MATCH.connections[assigned_color] = conn
 
-    # Tell the client what color they are
     conn.send(str.encode(f"COLOR|{assigned_color}"))
-    time.sleep(0.2)  # Anti-Squish Pause before starting the worker loop
+    time.sleep(0.2)
 
-    # Hand them to a worker thread
     thread = threading.Thread(target=handle_client, args=(conn, addr, assigned_color))
     thread.start()

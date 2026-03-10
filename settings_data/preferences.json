@@ -1,5 +1,5 @@
 {
-    "game_counter": 20,
+    "game_counter": 22,
     "auto_save": true,
     "starting_time": 180,
     "game_mode": "Online",
@@ -8,7 +8,7 @@
     "bot_thinking_time": 0.5,
     "fps": 60,
     "animation_time": 0.2,
-    "master_mute": true,
+    "master_mute": false,
     "music_mute": false,
     "sfx_mute": false,
     "volume": 0.29,

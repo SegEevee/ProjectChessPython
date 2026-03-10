@@ -7,6 +7,7 @@ import json
 import re
 import random
 import time
+import socket
 from network import Network
 from enum import Enum
 from side_scripts import opening_books as openings
@@ -1726,6 +1727,61 @@ def draw_home_page(screen):
         in_y = cy + 12 * math.sin(angle)
         pygame.draw.line(screen, set_color, (in_x, in_y), (out_x, out_y), 4) # Teeth
 
+
+def draw_server_browser_page(screen, servers_found: dict, return_rect):
+    # 1. Background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 24, bold=True)
+
+    # 2. Title
+    title = font_title.render("LOCAL SERVERS", True, (255, 255, 255))
+    screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+
+    # 3. Dynamic Server Buttons
+    start_y = 180
+    mouse_pos = pygame.mouse.get_pos()
+
+    for i, (ip, data) in enumerate(servers_found.items()):
+        btn_rect = pygame.Rect((SCREEN_WIDTH // 2) - 250, start_y + (i * 90), 500, 70)
+
+        # ELI5: We update the dictionary with the hitbox right as we paint it!
+        data["rect"] = btn_rect
+
+        is_full = data["seats"] == "0"
+        if is_full:
+            bg_color = (150, 60, 60)
+        else:
+            bg_color = (80, 150, 200) if btn_rect.collidepoint(mouse_pos) else (60, 120, 160)
+
+        pygame.draw.rect(screen, bg_color, btn_rect, border_radius=10)
+        pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2, border_radius=10)
+
+        srv_txt = font_btn.render(f"{data['name']} ({ip})", True, (255, 255, 255))
+        seat_txt = font_btn.render(f"Seats: {data['seats']}/2", True,
+                                   (200, 255, 200) if not is_full else (255, 150, 150))
+
+        screen.blit(srv_txt, (btn_rect.x + 20, btn_rect.y + 20))
+        screen.blit(seat_txt, (btn_rect.right - 140, btn_rect.y + 20))
+
+    # 4. Empty State Text
+    if not servers_found:
+        search_txt = font_btn.render("Listening for Megaphones...", True, (150, 150, 150))
+        screen.blit(search_txt, search_txt.get_rect(center=(SCREEN_WIDTH // 2, 250)))
+
+    # 5. Return Button
+    ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
+
 def draw_waiting_room_page(screen, my_color, return_rect):
     screen.fill((30, 30, 35))
     for row in range(8):
@@ -3196,6 +3252,65 @@ def run_general_settings_screen():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
+
+def run_server_browser_screen():
+    global SCREEN, FPS
+    pygame_clock = pygame.time.Clock()
+
+    # --- TURN ON THE MICROPHONE (UDP Listener) ---
+    mic = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mic.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    mic.bind(("", 5556))
+    mic.setblocking(False)
+
+    servers_found = {}
+    return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if return_rect.collidepoint(event.pos):
+                    return "BACK"
+
+                # Check the dictionary to see if they clicked a server hitbox
+                for ip, data in servers_found.items():
+                    if data.get("rect") and data["rect"].collidepoint(event.pos):
+                        if data["seats"] != "0":  # Bouncer: Don't let them click full rooms!
+                            return ip
+
+                            # --- LISTEN FOR SHOUTS ---
+        try:
+            for _ in range(10):
+                data, addr = mic.recvfrom(1024)
+                msg = data.decode('utf-8')
+                if msg.startswith("CHESS_SERVER|"):
+                    parts = msg.split("|")
+
+                    # Update the notebook
+                    servers_found[addr[0]] = {
+                        "time": time.time(),
+                        "name": parts[1],
+                        "seats": parts[2],
+                        "rect": servers_found.get(addr[0], {}).get("rect")  # Keep the old hitbox if it exists
+                    }
+        except BlockingIOError:
+            pass
+
+            # --- CLEAN UP DEAD SERVERS ---
+        now = time.time()
+        dead_ips = [ip for ip, data in servers_found.items() if now - data["time"] > 3.0]
+        for dead in dead_ips:
+            del servers_found[dead]
+
+        # Call the Paint Bucket!
+        draw_server_browser_page(SCREEN, servers_found, return_rect)
+
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
 def run_replay_screen(pgn_string: str):
     global SCREEN, IMAGE_CACHE, BOARD
     pygame_clock = pygame.time.Clock()
@@ -3662,45 +3777,32 @@ def main():
         #BOOKMARK
         if PREFERENCES["game_mode"] == "Online":
 
-            # 1. Only do the 10-second search if we DON'T already have a connection
+            # 1. If we don't have a connection, open the Server Browser!
             if not keep_connection:
-                print("Connecting to Server...")
-                connect_start = time.time()
-                connected = False
+                chosen_ip = run_server_browser_screen()
 
-                pygame.font.init()
-                font_title = pygame.font.SysFont("Arial", 40, bold=True)
-
-                while time.time() - connect_start < 10:
-                    ONLINE_CONNECTION = Network()
-                    if ONLINE_CONNECTION and ONLINE_CONNECTION.color:
-                        connected = True
-                        break
-
-                    for event in pygame.event.get():
-                        if event.type == pygame.QUIT: quit_game()
-
-                    SCREEN.fill((30, 30, 35))
-                    for row in range(8):
-                        for col in range(10):
-                            if (row + col) % 2 == 0: pygame.draw.rect(SCREEN, (35, 35, 40),
-                                                                      (col * 100, row * 100, 100, 100))
-
-                    txt = font_title.render("Looking for Server...", True, (255, 255, 255))
-                    SCREEN.blit(txt, txt.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)))
-
-                    pygame.display.flip()
-                    pygame_clock.tick(FPS)
-                    time.sleep(0.5)
-
-                if connected:
-                    PREFERENCES["player_color"] = ONLINE_CONNECTION.color
-                else:
-                    print("Failed to connect after 10 seconds. Falling back to Multiplayer.")
+                if chosen_ip is None:  # They clicked the red X on the window
+                    quit_game()
+                elif chosen_ip == "BACK":  # They clicked Return
                     ONLINE_CONNECTION = None
-                    PREFERENCES["game_mode"] = "Multiplayer"
+                    action = run_home_screen()
+                    if action == MenuSignal.QUIT:
+                        quit_game()
+                    elif action == MenuSignal.START_GAME:
+                        reset_match()
+                    return  # Stop resetting, we left!
+                else:
+                    # They clicked a valid server button! Dial the phone!
+                    print(f"Dialing {chosen_ip}...")
+                    try:
+                        ONLINE_CONNECTION = Network(chosen_ip)
+                        PREFERENCES["player_color"] = ONLINE_CONNECTION.color
+                    except Exception as e:
+                        print(f"Failed to dial {chosen_ip}: {e}")
+                        ONLINE_CONNECTION = None
+                        PREFERENCES["game_mode"] = "Multiplayer"
 
-            # 2. Whether we kept the connection or made a new one, go wait in the Lobby!
+            # 2. Whether we kept the connection or just made a new one, go wait in the Lobby!
             if ONLINE_CONNECTION:
                 lobby_result = run_waiting_room_screen()
                 if lobby_result == MenuSignal.QUIT:
