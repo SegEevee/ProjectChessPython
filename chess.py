@@ -187,16 +187,16 @@ for i in range(len(VIDEO_SETTINGS_OPTIONS)):
 
 DEFAULT_AUDIO_PACK = {
     # --- MUSIC ---
-    "menu_music": get_asset_path("assets/sounds/default/menu_music.mp3"),
-    "board_music": get_asset_path("assets/sounds/default/board_music.mp3"),
+    "menu_music": get_asset_path("assets/sounds/sfx_packs/default/menu_music.mp3"),
+    "board_music": get_asset_path("assets/sounds/board_music_packs/default/Claculated_Calm.mp3"),
 
     # --- SOUND EFFECTS (SFX) ---
-    "move": get_asset_path("assets/sounds/default/move.wav"),
-    "capture": get_asset_path("assets/sounds/default/capture.wav"),
-    "promote": get_asset_path("assets/sounds/default/promote.wav"),
-    "castle": get_asset_path("assets/sounds/default/castle.wav"),
-    "check": get_asset_path("assets/sounds/default/check.wav"),
-    "checkmate": get_asset_path("assets/sounds/default/checkmate.wav")
+    "move": get_asset_path("assets/sounds/sfx_packs/default/move.wav"),
+    "capture": get_asset_path("assets/sounds/sfx_packs/default/capture.wav"),
+    "promote": get_asset_path("assets/sounds/sfx_packs/default/promote.wav"),
+    "castle": get_asset_path("assets/sounds/sfx_packs/default/castle.wav"),
+    "check": get_asset_path("assets/sounds/sfx_packs/default/check.wav"),
+    "checkmate": get_asset_path("assets/sounds/sfx_packs/default/checkmate.wav")
 }
 
 #</editor-fold>

@@ -1,9 +1,9 @@
 {
-    "game_counter": 2,
+    "game_counter": 4,
     "auto_save": true,
     "starting_time": 180,
     "game_mode": "Online",
-    "player_color": false,
+    "player_color": "Black",
     "bot_depth": 4,
     "bot_thinking_time": 0.5,
     "fps": 60,
