@@ -5,13 +5,14 @@ MASTER_ADDRESS = "192.168.68.64"  # Make sure this matches the laptop's IP!
 
 
 class Network:
-    def __init__(self, target_ip): # <-- We pass the IP in here now!
+    def __init__(self, target_ip):
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server = target_ip # <-- Set it here!
+        self.server = target_ip
         self.port = 5555
         self.addr = (self.server, self.port)
         self.sync_data = None
-        self.color = self.connect()
+        self.color = None # Give it a default empty value
+        self.connect() # Just run the function! It will set self.color inside it.
 
 
     def connect(self):
