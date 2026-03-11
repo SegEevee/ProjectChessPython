@@ -93,7 +93,7 @@ def broadcast_presence():
 
             # Scream the message! Format: CHESS_SERVER | Room Name | Empty Seats
             msg = f"CHESS_SERVER|Local Server|{empty_seats}"
-            udp.sendto(msg.encode('utf-8'), ('26.255.255.255', UDP_PORT))
+            udp.sendto(msg.encode('utf-8'), ("<broadcast>", UDP_PORT))
 
         except Exception as e:
             pass
