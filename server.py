@@ -85,6 +85,8 @@ def broadcast_presence():
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
+    broadcast_targets = ["<broadcast>", "26.255.255.255"]
+
     while True:
         try:
             # Count the empty chairs
@@ -93,7 +95,14 @@ def broadcast_presence():
 
             # Scream the message! Format: CHESS_SERVER | Room Name | Empty Seats
             msg = f"CHESS_SERVER|Local Server|{empty_seats}"
-            udp.sendto(msg.encode('utf-8'), ("<broadcast>", UDP_PORT))
+
+            # Force the megaphone out of EVERY window in the list
+            for target in broadcast_targets:
+                try:
+                    udp.sendto(msg.encode('utf-8'), (target, UDP_PORT))
+                except Exception:
+                    # If a specific network is temporarily down, ignore the error and keep shouting
+                    pass
 
         except Exception as e:
             pass
