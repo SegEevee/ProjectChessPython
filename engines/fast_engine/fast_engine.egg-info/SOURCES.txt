@@ -1,0 +1,9 @@
+pyproject.toml
+setup.py
+./setup.py
+C:/Users/segev/source/repos/ProjectChessPython/fast_engine/src/fast_engine.cpp
+fast_engine.egg-info/PKG-INFO
+fast_engine.egg-info/SOURCES.txt
+fast_engine.egg-info/dependency_links.txt
+fast_engine.egg-info/not-zip-safe
+fast_engine.egg-info/top_level.txt

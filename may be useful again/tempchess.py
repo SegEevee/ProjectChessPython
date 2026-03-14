@@ -1783,7 +1783,7 @@ def highlight_square(screen, square: SquarePosition, color: tuple, alpha: int = 
     if square is None:
         return
 
-    # 1. Create a special piece of glass that is 100% invisible by default
+    # 1. Create a special piece of glass that is 100% invisible by default_pack
     glass_pane = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
 
     # 2. Mix the RGB paint with the Alpha (transparency)

@@ -10,8 +10,10 @@ import time
 import socket
 from network import Network
 from enum import Enum
+from technical_audio import music_manager
 from side_scripts import opening_books as openings
 from side_scripts import python_glue as bot
+from engines.stockfish import stockfishpy as stockfish
 
 #<editor-fold desc="FILES AND PREFERENCES">
 def get_asset_path(relative_path):
@@ -75,7 +77,8 @@ PREFERENCES = {
     "music_mute": False,
     "sfx_mute": False,
     "volume": 0.5,
-    "sound_pack": "Default"
+    "sound_pack": "Default",
+    "quick_start_bot": False
 }
 
 DEPTH_NAMES = {
@@ -84,7 +87,8 @@ DEPTH_NAMES = {
     3 : "Beginner (3)",
     4 : "Average (4)",
     5 : "Above Avg (5)",
-    6 : "Best I have (6)"
+    6 : "Best I have (6)",
+    9999 : "Good Luck"
 }
 
 
@@ -93,15 +97,17 @@ DEPTH_NAMES = {
 
 # <editor-fold desc="CONFIG">
 
-#delta time - second divided by FPS
+# --- Find your CONFIG section and update the heights ---
 BOARD_SIZE = 8
 SQUARE_SIZE = 80
 WINDOW_SIZE = BOARD_SIZE * SQUARE_SIZE
 
 # The Balanced Layout
 SIDE_PANEL_WIDTH = 220
+BOTTOM_PANEL_HEIGHT = 120
+
 SCREEN_WIDTH = (SIDE_PANEL_WIDTH * 2) + WINDOW_SIZE
-SCREEN_HEIGHT = WINDOW_SIZE
+SCREEN_HEIGHT = WINDOW_SIZE + BOTTOM_PANEL_HEIGHT # Expands the window downwards
 
 # The crucial shift for all board math
 BOARD_X_OFFSET = SIDE_PANEL_WIDTH
@@ -131,7 +137,7 @@ BOT_SEARCH_DEPTH = 6
 SETTINGS_OPTIONS = [
     ("General Settings", (100, 100, 100), (130, 130, 130)), # Grey
     ("Saved Games", (40, 160, 160), (60, 200, 200)),   # Aqua
-    ("Audio Settings", (180, 60, 60), (220, 80, 80)),  # Red
+    ("Audio & Music", (180, 60, 60), (220, 80, 80)),  # Red
     ("Video Settings", (60, 160, 60), (80, 200, 80))]   #Green
 SETTINGS_RECTS = []
 
@@ -148,7 +154,7 @@ RETURN_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 30
 #<editor-fold desc="GENERAL SETTINGS">
 
 #<editor-fold desc="GENERAL SETTINGS UI">
-GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color", "Bot Depth", "Bot Time"]
+GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color", "Bot Setup"]
 GENERAL_SETTINGS_RECTS = []
 
 # ELI5: We have 6 blocks. We want them in 2 columns.
@@ -183,12 +189,14 @@ for i in range(len(VIDEO_SETTINGS_OPTIONS)):
 
 #<editor-fold desc="AUDIO">
 
+MUSIC_MANAGER : music_manager.MusicManager | None = None
+
 #<editor-fold desc="AUDIO PACKS">
 
 DEFAULT_AUDIO_PACK = {
     # --- MUSIC ---
     "menu_music": get_asset_path("assets/sounds/sfx_packs/default/menu_music.mp3"),
-    "board_music": get_asset_path("assets/sounds/board_music_packs/default/Claculated_Calm.mp3"),
+    "board_music": get_asset_path("assets/sounds/board_music_packs/default_pack/Claculated_Calm.mp3"),
 
     # --- SOUND EFFECTS (SFX) ---
     "move": get_asset_path("assets/sounds/sfx_packs/default/move.wav"),
@@ -215,7 +223,7 @@ def load_sfx(name):
         try:
             AUDIO_CACHE[name] = dj.Sound(CURRENT_AUDIO_PATHS[name])
         except Exception as e:
-            print(f"Missing audio file: {CURRENT_AUDIO_PATHS[name]}")
+            print(f"Missing technical_audio file: {CURRENT_AUDIO_PATHS[name]}")
             AUDIO_CACHE[name] = None
     return AUDIO_CACHE[name]
 
@@ -260,6 +268,72 @@ def play_music(name):
 def update_audio_volume():
     """Called instantly when sliding the volume bar so you can hear it change."""
     dj.music.set_volume(PREFERENCES["volume"])
+
+# <editor-fold desc="GLOBAL MEDIA PLAYER LOGIC">
+MINI_PLAYER_UI_STATE = {
+    "is_dragging": False,
+    "drag_percent": 0.0
+}
+
+def update_media_player():
+    """The Auto-DJ: Put this in ANY game loop to keep the playlist moving."""
+    if MUSIC_MANAGER and MUSIC_MANAGER.current_playlist and MUSIC_MANAGER.finished_song():
+        MUSIC_MANAGER.next_track()
+
+def handle_media_player_event(event):
+    """
+    The Universal Music Bouncer: Give it a Pygame event.
+    Returns True if the media player ate the event, False if it didn't.
+    """
+    global MINI_PLAYER_UI_STATE
+
+    # 1. If the radio is off or hidden, we don't care about these clicks.
+    if not MUSIC_MANAGER or MUSIC_MANAGER.state == music_manager.MediaPlayerState.OUTSIDE:
+        return False
+
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        if MINI_PREV_BTN.collidepoint(event.pos):
+            MUSIC_MANAGER.prev_track()
+            return True
+        if MINI_NEXT_BTN.collidepoint(event.pos):
+            MUSIC_MANAGER.next_track()
+            return True
+        if MINI_PLAY_BTN.collidepoint(event.pos):
+            if MUSIC_MANAGER.state == music_manager.MediaPlayerState.PLAYING:
+                MUSIC_MANAGER.pause_music()
+            else:
+                MUSIC_MANAGER.unpause_music()
+            return True
+        if ADD_SONGS_BTN.collidepoint(event.pos):
+            print("Add Songs button pressed (No function yet!)")
+            return True
+        if MINI_PROGRESS_BAR.collidepoint(event.pos):
+            MINI_PLAYER_UI_STATE["is_dragging"] = True
+            relative_x = event.pos[0] - MINI_PROGRESS_BAR.x
+            MINI_PLAYER_UI_STATE["drag_percent"] = max(0.0, min(1.0, relative_x / MINI_PROGRESS_BAR.width))
+            return True
+
+    elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+        if MINI_PLAYER_UI_STATE["is_dragging"]:
+            MINI_PLAYER_UI_STATE["is_dragging"] = False
+
+            current_track = MUSIC_MANAGER.get_current_track()
+            if current_track:
+                target_time = current_track.length * MINI_PLAYER_UI_STATE["drag_percent"]
+
+                MUSIC_MANAGER.set_timestamp_seconds(target_time)
+
+            return True
+
+    elif event.type == pygame.MOUSEMOTION:
+        if MINI_PLAYER_UI_STATE["is_dragging"]:
+            relative_x = event.pos[0] - MINI_PROGRESS_BAR.x
+            MINI_PLAYER_UI_STATE["drag_percent"] = max(0.0, min(1.0, relative_x / MINI_PROGRESS_BAR.width))
+            return True
+
+    return False # The event had nothing to do with the media player
+# </editor-fold>
+
 
 
 # </editor-fold>
@@ -322,7 +396,6 @@ REPLAY_MENU_BTN = pygame.Rect(RIGHT_MENU_X + 35, SCREEN_HEIGHT - 100, 150, 60)
 # <editor-fold desc="MAIN GAME UI">
 RIGHT_MENU_X = BOARD_X_OFFSET + WINDOW_SIZE
 
-# --- PRE-CALCULATED UI HITBOXES ---
 PAUSE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, 175, 150, 40)
 UNDO_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, PAUSE_BTN_RECT.bottom + 10, 150, 40)
 RESET_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, UNDO_BTN_RECT.bottom + 10, 150, 40)
@@ -331,19 +404,35 @@ NOTATION_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, MENU_BTN_RECT.bottom + 10, 15
 FLIP_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, NOTATION_BTN_RECT.bottom + 10, 150, 40)
 SAVE_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 35, FLIP_BTN_RECT.bottom + 10, 150, 40)
 
-# --- CLOCK RECTS (Shifted to RIGHT_MENU_X) ---
-#I put the clock slightly to the left in the 220px panel to make room for the flags
+# --- CLOCK RECTS ---
+# We anchor to WINDOW_SIZE now! They will not sink when the screen gets taller.
 TOP_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, 20, 110, 60)
-BOTTOM_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, SCREEN_HEIGHT - 80, 110, 60)
+BOTTOM_CLOCK_RECT = pygame.Rect(RIGHT_MENU_X + 25, WINDOW_SIZE - 80, 110, 60)
 
-# Clocks are 110px wide. These 40x40 buttons sit perfectly to the right of them!
 TOP_FLAG_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, 30, 40, 40)
-BOTTOM_FLAG_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 70, 40, 40)
+BOTTOM_FLAG_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, WINDOW_SIZE - 70, 40, 40)
 
-# Anchored directly underneath the flags
 TOP_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, 80, 40, 40)
-BOTTOM_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, SCREEN_HEIGHT - 120, 40, 40)
+BOTTOM_DRAW_BTN_RECT = pygame.Rect(RIGHT_MENU_X + 145, WINDOW_SIZE - 120, 40, 40)
+
+
+# --- MEDIA MANAGER RECTS (The Basement) ---
+BOTTOM_PANEL_BG = pygame.Rect(BOARD_X_OFFSET, WINDOW_SIZE, WINDOW_SIZE, BOTTOM_PANEL_HEIGHT)
+
+# Left Side (The dead button)
+ADD_SONGS_BTN = pygame.Rect(BOTTOM_PANEL_BG.x + 20, BOTTOM_PANEL_BG.y + 75, 120, 30)
+
+# Center Math (The controls)
+center_x = BOTTOM_PANEL_BG.x + (WINDOW_SIZE // 2)
+MINI_PREV_BTN = pygame.Rect(center_x - 70, BOTTOM_PANEL_BG.y + 20, 40, 40)
+MINI_PLAY_BTN = pygame.Rect(center_x - 20, BOTTOM_PANEL_BG.y + 20, 40, 40)
+MINI_NEXT_BTN = pygame.Rect(center_x + 30, BOTTOM_PANEL_BG.y + 20, 40, 40)
+
+# Slider anchored under the buttons
+MINI_PROGRESS_BAR = pygame.Rect(center_x - 150, BOTTOM_PANEL_BG.y + 80, 300, 15)
+
 # </editor-fold>
+
 
 #</editor-fold>
 
@@ -437,23 +526,46 @@ def pgn_to_move_list(pgn_string: str) -> list[str]:
             moves.append(clean_token)
     print(moves)
     return moves
+
+
 def get_move_from_san(board, san_string: str):
     """The Reverse SAN Trick: Finds the move object that produces this exact string."""
-    # Strip the Red Pen marks (+ and #) because the move generator doesn't use them
+    # 1. Strip the Red Pen marks (+ and #)
     clean_san = san_string.replace("+", "").replace("#", "")
+
+    # --- THE MENTOR FIX: Intercept the Promotion! ---
+    # If the string has an '=', it means a piece was promoted.
+    promotion_type_str = None
+    if "=" in clean_san:
+        parts = clean_san.split("=")
+        clean_san = parts[0]  # This gives us just the base move (e.g., 'e8' or 'exd8')
+        promotion_type_str = parts[1]  # This gives us the chosen piece (e.g., 'Q' or 'N')
 
     # Check every legal move for the current player
     for piece in board.get_all_pieces():
         if piece.color == board.active_color:
             for target_pos, move in piece.legal_moves.items():
                 victim = board.get_piece_at(move.victim_pos) if move.victim_pos else None
-                # Generate the SAN for this hypothetical move
+
+                # Generate the SAN for this hypothetical move.
+                # Because legal moves start with promotion_choice = None, this generates the base SAN ('e8')
                 test_san = board.get_algebraic_notation(move, piece, victim)
 
-                # If it matches our diary, this is the one!
+                # If the base moves match (e.g., 'e8' == 'e8'), we found it!
                 if test_san == clean_san:
+
+                    # If we intercepted an '=', we MUST assign that choice to the move object
+                    # before we hand it back, otherwise execute_move() will choke.
+                    if promotion_type_str and move.move_type == MoveType.PROMOTION:
+                        for piece_type in ChessPieceType:
+                            if piece_type.value == promotion_type_str:
+                                move.promotion_choice = piece_type
+                                break
+
                     return move
+
     return None
+
 #</editor-fold>
 
 #<editor-fold desc="FILE HANDLING">
@@ -849,8 +961,16 @@ class ChessPiece:
         """The Bouncer. Throws out any move that gets the King killed."""
         safe_moves = {}
         for pos, move in self.legal_moves.items():
-            # We ask the Board (the table) to use its robotic arm on this specific move
-            if board.is_move_safe(self, move):
+
+            # --- THE FIX: Protect Castling from the Time Machine ---
+            # can_castle() already rigorously checks the real chess rules.
+            # If we let the Time Machine simulate it, it moves the King to the Rook's square,
+            # which incorrectly bans castling if the Rook is under attack!
+            if move.move_type == MoveType.CASTLE:
+                safe_moves[pos] = move
+
+            # For all normal moves, use the robotic arm to check for safety
+            elif board.is_move_safe(self, move):
                 safe_moves[pos] = move
 
         # Replace the old list with the strictly safe list
@@ -1026,12 +1146,23 @@ class King(ChessPiece):
         for friend in self.player.pieces:
             if friend.type == ChessPieceType.ROOK:
                 if can_castle(board, self, friend):
-                    # The target square is the Rook's square, so the UI knows we clicked it!
-                    self.legal_moves[friend.position] = Move(
+                    # 1. Create the single mechanical engine move.
+                    # We leave 'to_pos' as the Rook so execute_move() can easily find it.
+                    castle_move = Move(
                         from_pos=self.position,
                         to_pos=friend.position,
                         move_type=MoveType.CASTLE
                     )
+
+                    # 2. GUI Hitbox A: Allow the player to click/drop on the Rook
+                    self.legal_moves[friend.position] = castle_move
+
+                    # 3. GUI Hitbox B: Allow the player to click/drop on the King's final destination
+                    direction = 1 if friend.position.col > self.position.col else -1
+                    king_new_col = self.position.col + (2 * direction)
+                    king_target_pos = SquarePosition(row=self.position.row, col=king_new_col)
+
+                    self.legal_moves[king_target_pos] = castle_move
 
     def is_piece_protected(self, pos, enemy_player):
         return enemy_player.is_controlling_square(pos)
@@ -1682,6 +1813,8 @@ def get_image_path(color: ChessColor, piece_type: ChessPieceType):
     # 2. Pass it through the 'Pathfinder' to get the real location
     return get_asset_path(relative)
 
+
+
 def draw_home_page(screen):
     # 1. Background - Deep Slate with a faint, massive checkerboard pattern
     screen.fill((30, 30, 35))
@@ -1851,6 +1984,111 @@ def draw_settings_page(screen):
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
 
+def draw_bot_selection_page(screen, ui_rects, depths, is_launching, scroll_y, clip_rect, track_rect, thumb_rect,
+                            max_scroll):
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 50, bold=True)
+    font_sub = pygame.font.SysFont("Arial", 24, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 22, bold=True)
+    font_small = pygame.font.SysFont("Arial", 14, bold=True)
+
+    title_surf = font_title.render("BOT SETUP", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 60)))
+
+    # --- 1. Colors ---
+    c_txt = font_sub.render("Play As:", True, (200, 200, 200))
+    screen.blit(c_txt, c_txt.get_rect(center=(SCREEN_WIDTH // 2, 130)))
+
+    for color_name, rect in ui_rects["colors"].items():
+        is_selected = (PREFERENCES["player_color"] == color_name)
+        if color_name == "White":
+            bg_col = (220, 220, 220) if is_selected else (100, 100, 100)
+            text_col = (0, 0, 0) if is_selected else (200, 200, 200)
+        else:
+            bg_col = (40, 40, 40) if is_selected else (100, 100, 100)
+            text_col = (255, 255, 255) if is_selected else (200, 200, 200)
+
+        if rect.collidepoint(mouse_pos) and not is_selected:
+            bg_col = (min(bg_col[0] + 30, 255), min(bg_col[1] + 30, 255), min(bg_col[2] + 30, 255))
+
+        pygame.draw.rect(screen, bg_col, rect, border_radius=10)
+        pygame.draw.rect(screen, (255, 255, 255) if is_selected else (150, 150, 150), rect, 3, border_radius=10)
+        surf = font_btn.render(color_name, True, text_col)
+        screen.blit(surf, surf.get_rect(center=rect.center))
+
+    # --- 2. Bots (THE SCISSORS GO HERE) ---
+    b_txt = font_sub.render("Opponent Level:", True, (200, 200, 200))
+    screen.blit(b_txt, b_txt.get_rect(center=(SCREEN_WIDTH // 2, 240)))
+
+    # Draw a subtle background for the bot window so it looks like a recessed panel
+    pygame.draw.rect(screen, (25, 25, 30), clip_rect, border_radius=5)
+
+    screen.set_clip(clip_rect)
+    start_y = 290
+
+    for i, depth in enumerate(depths):
+        col = i % 2
+        row = i // 2
+        x = (SCREEN_WIDTH // 2) - 260 + (col * 270)
+        y = start_y + (row * 60) - scroll_y
+        rect = pygame.Rect(x, y, 250, 45)
+
+        is_selected = (PREFERENCES["bot_depth"] == depth)
+        base_col = (100, 150, 200) if is_selected else (60, 80, 100)
+
+        if rect.collidepoint(mouse_pos) and not is_selected and clip_rect.collidepoint(mouse_pos):
+            base_col = (80, 100, 130)
+
+        pygame.draw.rect(screen, base_col, rect, border_radius=10)
+        pygame.draw.rect(screen, (255, 255, 255) if is_selected else (120, 120, 120), rect, 3, border_radius=10)
+        surf = font_btn.render(DEPTH_NAMES[depth], True, (255, 255, 255))
+        screen.blit(surf, surf.get_rect(center=rect.center))
+
+    screen.set_clip(None)
+
+    # --- THE INTERACTABLE SCROLLBAR ---
+    if max_scroll > 0:
+        # Draw the Track
+        pygame.draw.rect(screen, (40, 40, 45), track_rect, border_radius=6)
+        pygame.draw.rect(screen, (60, 60, 65), track_rect, 1, border_radius=6)
+
+        # Draw the Thumb
+        thumb_col = (180, 180, 200) if thumb_rect.collidepoint(mouse_pos) else (120, 120, 140)
+        pygame.draw.rect(screen, thumb_col, thumb_rect, border_radius=6)
+
+    # --- 3. Quick Start Checkbox ---
+    qs_rect = ui_rects["quick_start"]
+    pygame.draw.rect(screen, (50, 50, 50), qs_rect, border_radius=5)
+    if PREFERENCES["quick_start_bot"]:
+        pygame.draw.rect(screen, (80, 200, 80), qs_rect.inflate(-8, -8), border_radius=3)
+    pygame.draw.rect(screen, (200, 200, 200), qs_rect, 2, border_radius=5)
+    qs_txt = font_sub.render("Quick Start (Skip this page next time)", True, (200, 200, 200))
+    screen.blit(qs_txt, (qs_rect.right + 15, qs_rect.y + 2))
+
+    # --- 4. Confirm / Cancel ---
+    conf_rect = ui_rects["confirm"]
+    c_col = (80, 200, 80) if conf_rect.collidepoint(mouse_pos) else (60, 150, 60)
+    pygame.draw.rect(screen, c_col, conf_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), conf_rect, 3, border_radius=15)
+
+    btn_text = "START GAME" if is_launching else "SAVE SETTINGS"
+    conf_txt = font_btn.render(btn_text, True, (255, 255, 255))
+    screen.blit(conf_txt, conf_txt.get_rect(center=conf_rect.center))
+
+    canc_rect = ui_rects["cancel"]
+    can_col = (180, 80, 80) if canc_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, can_col, canc_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), canc_rect, 3, border_radius=15)
+    can_txt = font_btn.render("CANCEL", True, (255, 255, 255))
+    screen.blit(can_txt, can_txt.get_rect(center=canc_rect.center))
+
 def draw_general_settings_page(screen):
     # 1. Background
     screen.fill((30, 30, 35))
@@ -1867,14 +2105,17 @@ def draw_general_settings_page(screen):
     # 2. Title
     title_surf = font_title.render("GENERAL SETTINGS", True, (255, 255, 255))
     screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+
     txt_str = ""
-    color = None
+
     # 3. Dynamic Loop
     for i, rect in enumerate(GENERAL_SETTINGS_RECTS):
         btn_name = GENERAL_SETTINGS_OPTIONS[i]
 
+        # THE FIX: Reset the color to a default grey every loop so it doesn't leak!
+        color = (150, 150, 150)
+
         if btn_name == "Auto Save":
-            # Look at the dictionary!
             if PREFERENCES["auto_save"]:
                 color = (180, 180, 180) if rect.collidepoint(mouse_pos) else (150, 150, 150)
                 txt_str = "Auto Save: ON"
@@ -1884,28 +2125,28 @@ def draw_general_settings_page(screen):
 
         elif btn_name == "Time Control":
             color = (100, 150, 200) if rect.collidepoint(mouse_pos) else (80, 120, 160)
-            # Use the dictionary value!
             txt_str = f"Time: {PREFERENCES['starting_time'] // 60} Min"
 
         elif btn_name == "Game Mode":
-            color = (120, 100, 180) if rect.collidepoint(mouse_pos) else (100, 80, 150)  # Purple
+            color = (120, 100, 180) if rect.collidepoint(mouse_pos) else (100, 80, 150)
             txt_str = f"Mode: {PREFERENCES['game_mode']}"
 
         elif btn_name == "Player Color":
             if PREFERENCES["game_mode"] == "Multiplayer" or PREFERENCES["game_mode"] == "Online":
-                color = (60, 60, 60)  # Dark Grey (Disabled)
+                color = (60, 60, 60)  # Disabled
                 txt_str = "Color: N/A"
             else:
-                color = (180, 120, 100) if rect.collidepoint(mouse_pos) else (150, 100, 80)  # Orange
+                color = (180, 120, 100) if rect.collidepoint(mouse_pos) else (150, 100, 80)
                 txt_str = f"Play as: {PREFERENCES['player_color']}"
 
-        elif btn_name == "Bot Depth":
-            color = (200, 150, 100) if rect.collidepoint(mouse_pos) else (180, 120, 80)  # Orange-Brown
-            txt_str = f"Strength: {DEPTH_NAMES[PREFERENCES['bot_depth']]}"
-
-        elif btn_name == "Bot Time":
-            color = (100, 200, 150) if rect.collidepoint(mouse_pos) else (80, 180, 120)  # Mint Green
-            txt_str = f"Bot Time: {PREFERENCES['bot_thinking_time']}s"
+        # THE FIX: Added the specific logic for the new Bot Setup button!
+        elif btn_name == "Bot Setup":
+            if PREFERENCES["game_mode"] == "Singleplayer":
+                color = (102, 226, 219) if rect.collidepoint(mouse_pos) else (44, 200, 190)
+                txt_str = "Bot Setup"
+            else:
+                color = (60, 60, 60)  # Disabled
+                txt_str = "Bot Setup (N/A)"
 
         pygame.draw.rect(screen, color, rect, border_radius=15)
         pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
@@ -1968,8 +2209,7 @@ def draw_video_settings_page(screen):
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
 
-def draw_audio_settings_page(screen):
-    # 1. Background
+def draw_audio_settings_page(screen, ui_rects):
     screen.fill((30, 30, 35))
     for row in range(8):
         for col in range(10):
@@ -1978,67 +2218,178 @@ def draw_audio_settings_page(screen):
 
     mouse_pos = pygame.mouse.get_pos()
     pygame.font.init()
-    font_title = pygame.font.SysFont("Arial", 60, bold=True)
-    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
+    font_title = pygame.font.SysFont("Arial", 50, bold=True)
+    font_sub = pygame.font.SysFont("Arial", 30, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 20, bold=True)  # Shrunk!
+    font_small = pygame.font.SysFont("Arial", 14, bold=True)  # Shrunk!
 
-    # 2. Title
-    title_surf = font_title.render("AUDIO SETTINGS", True, (255, 255, 255))
-    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+    title_surf = font_title.render("AUDIO & MUSIC", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 60)))
 
-    # 3. Dynamic Loop for Buttons
-    # 3. Dynamic Loop for Buttons
-    for i, rect in enumerate(AUDIO_SETTINGS_RECTS):
+    pygame.draw.line(screen, (80, 80, 90), (SCREEN_WIDTH // 2, 140), (SCREEN_WIDTH // 2, SCREEN_HEIGHT - 160), 3)
+
+    # --- LEFT COLUMN: SETTINGS ---
+    left_title = font_sub.render("SETTINGS", True, (200, 200, 200))
+    screen.blit(left_title, left_title.get_rect(center=(SCREEN_WIDTH // 4, 150)))
+
+    for i in range(4):
+        rect = ui_rects["settings"][i]
         btn_name = AUDIO_SETTINGS_OPTIONS[i]
 
-        if btn_name == "Master Playing":
-            # The Fix: Playing is the opposite of muted!
-            is_playing = not PREFERENCES["master_mute"]
+        if "Pack" in btn_name:
+            txt_str = f"SFX Pack: {PREFERENCES['sound_pack']}"
+            color = (120, 100, 180) if rect.collidepoint(mouse_pos) else (100, 80, 150)
+        else:
+            is_playing = not PREFERENCES[f"{btn_name.split()[0].lower()}_mute"]
             color = (80, 180, 80) if is_playing else (180, 80, 80)
-            txt_str = "Master Playing: ON" if is_playing else "Master Playing: OFF"
+            if rect.collidepoint(mouse_pos):
+                color = (min(color[0] + 30, 255), min(color[1] + 30, 255), min(color[2] + 30, 255))
+            txt_str = f"{btn_name}: ON" if is_playing else f"{btn_name}: OFF"
 
-        elif btn_name == "Music Playing":
-            is_playing = not PREFERENCES["music_mute"]
-            color = (80, 180, 80) if is_playing else (180, 80, 80)
-            txt_str = "Music Playing: ON" if is_playing else "Music Playing: OFF"
-
-        elif btn_name == "SFX Playing":
-            is_playing = not PREFERENCES["sfx_mute"]
-            color = (80, 180, 80) if is_playing else (180, 80, 80)
-            txt_str = "SFX Playing: ON" if is_playing else "SFX Playing: OFF"
-
-        elif btn_name == "Sound Pack":
-            color = (100, 100, 100)  # Grayed out, because we only have one!
-            txt_str = f"Pack: {PREFERENCES['sound_pack']}"
-
-        pygame.draw.rect(screen, color, rect, border_radius=15)
-        pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
+        pygame.draw.rect(screen, color, rect, border_radius=10)
+        pygame.draw.rect(screen, (255, 255, 255), rect, 2, border_radius=10)
         txt = font_btn.render(txt_str, True, (255, 255, 255))
         screen.blit(txt, txt.get_rect(center=rect.center))
 
-    # --- THE VOLUME SLIDER ---
-    # Draw the empty dark track
-    pygame.draw.rect(screen, (50, 50, 50), VOLUME_TRACK_RECT, border_radius=15)
-    pygame.draw.rect(screen, (255, 255, 255), VOLUME_TRACK_RECT, 3, border_radius=15)
-
-    # Calculate and draw the blue fill
+    vol_rect = ui_rects["volume"]
+    pygame.draw.rect(screen, (50, 50, 50), vol_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), vol_rect, 3, border_radius=15)
     vol = PREFERENCES["volume"]
-    fill_width = int((VOLUME_TRACK_RECT.width - 6) * vol)  # -6 accounts for the border thickness
+    fill_width = int((vol_rect.width - 6) * vol)
     if fill_width > 0:
-        fill_rect = pygame.Rect(VOLUME_TRACK_RECT.x + 3, VOLUME_TRACK_RECT.y + 3, fill_width,
-                                VOLUME_TRACK_RECT.height - 6)
+        fill_rect = pygame.Rect(vol_rect.x + 3, vol_rect.y + 3, fill_width, vol_rect.height - 6)
         pygame.draw.rect(screen, (80, 150, 200), fill_rect, border_radius=12)
-
     vol_txt = font_btn.render(f"Volume: {int(vol * 100)}%", True, (255, 255, 255))
-    screen.blit(vol_txt, vol_txt.get_rect(center=VOLUME_TRACK_RECT.center))
+    screen.blit(vol_txt, vol_txt.get_rect(center=vol_rect.center))
 
-    # 4. Return Button
+    # --- RIGHT COLUMN: PACKS ---
+    right_title = font_sub.render("MUSIC PACKS", True, (200, 200, 200))
+    screen.blit(right_title, right_title.get_rect(center=(SCREEN_WIDTH * 3 // 4, 150)))
+
+    clear_rect = ui_rects["clear"]
+    c_col = (180, 80, 80) if clear_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, c_col, clear_rect, border_radius=10)
+    pygame.draw.rect(screen, (255, 255, 255), clear_rect, 2, border_radius=10)
+    c_txt = font_btn.render("CLEAR PLAYLIST", True, (255, 255, 255))
+    screen.blit(c_txt, c_txt.get_rect(center=clear_rect.center))
+
+    for item in ui_rects["packs"]:
+        main_rect = item["main"]
+        add_rect = item["add"]
+        view_rect = item["view"]
+
+        pygame.draw.rect(screen, (50, 50, 60), main_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 100, 120), main_rect, 2, border_radius=10)
+
+        name_txt = font_btn.render(item["pack"].replace("_", " ").title(), True, (220, 220, 220))
+        screen.blit(name_txt, (main_rect.x + 20, main_rect.y + 13))
+
+        add_col = (80, 200, 80) if add_rect.collidepoint(mouse_pos) else (60, 150, 60)
+        pygame.draw.rect(screen, add_col, add_rect, border_radius=5)
+        add_txt = font_small.render("+ ADD ALL", True, (255, 255, 255))
+        screen.blit(add_txt, add_txt.get_rect(center=add_rect.center))
+
+        view_col = (80, 150, 200) if view_rect.collidepoint(mouse_pos) else (60, 100, 150)
+        pygame.draw.rect(screen, view_col, view_rect, border_radius=5)
+        v_txt = font_small.render("VIEW SONGS", True, (255, 255, 255))
+        screen.blit(v_txt, v_txt.get_rect(center=view_rect.center))
+
     ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
     pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
     pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
     ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
-def draw_saved_games_page(screen, games, scroll_y, return_rect,import_rect):
+def update_window_size(force_fullscreen=None, in_game=False):
+    """Dynamically shrinks or expands the window based on location and mute settings."""
+    global SCREEN_HEIGHT, SCREEN, RETURN_BTN_RECT, REPLAY_MENU_BTN
+
+    # 1. Decide the height
+    # Only expand if we are ON THE BOARD (in_game) AND the music is allowed to play!
+    if in_game and not PREFERENCES["master_mute"] and not PREFERENCES["music_mute"]:
+        SCREEN_HEIGHT = WINDOW_SIZE + BOTTOM_PANEL_HEIGHT  # Expand it!
+    else:
+        SCREEN_HEIGHT = WINDOW_SIZE  # Shrink it!
+
+    # 2. Check if we are fullscreen
+    if force_fullscreen is not None:
+        is_fullscreen = force_fullscreen
+    else:
+        is_fullscreen = SCREEN.get_flags() & pygame.FULLSCREEN if SCREEN else False
+
+    # 3. Physically resize the Pygame window (NO SCALED!)
+    if is_fullscreen:
+        SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+    else:
+        SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+
+    # 4. Re-anchor the two global buttons that were glued to the bottom
+    RETURN_BTN_RECT.y = SCREEN_HEIGHT - 100
+    REPLAY_MENU_BTN.y = SCREEN_HEIGHT - 100
+
+
+def draw_view_pack_page(screen, pack_name, tracks, scroll_y, track_rects):
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 50, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 20, bold=True)
+    font_small = pygame.font.SysFont("Arial", 16, bold=True)
+
+    title_str = pack_name.replace("_", " ").upper() + " SONGS"
+    title_surf = font_title.render(title_str, True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 60)))
+
+    # The Scissors (Window Pane for scrolling)
+    clip_rect = pygame.Rect(0, 120, SCREEN_WIDTH, SCREEN_HEIGHT - 220)
+    screen.set_clip(clip_rect)
+
+    track_rects.clear()
+    start_y = 140
+    for i, track in enumerate(tracks):
+        y = start_y + (i * 70) - scroll_y
+        main_rect = pygame.Rect((SCREEN_WIDTH // 2) - 300, y, 600, 60)
+        next_rect = pygame.Rect(main_rect.right - 240, y + 10, 110, 40)
+        end_rect = pygame.Rect(main_rect.right - 120, y + 10, 110, 40)
+
+        track_rects.append({"track": track, "next": next_rect, "end": end_rect})
+
+        pygame.draw.rect(screen, (50, 50, 60), main_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 100, 120), main_rect, 2, border_radius=10)
+
+        # ELI5: Clean up the underscores so the names look nice!
+        name_txt = font_btn.render(track.name.replace("_", " "), True, (220, 220, 220))
+        screen.blit(name_txt, (main_rect.x + 20, main_rect.y + 18))
+
+        # Play Next Button (Green)
+        next_col = (80, 200, 80) if next_rect.collidepoint(mouse_pos) else (60, 150, 60)
+        pygame.draw.rect(screen, next_col, next_rect, border_radius=5)
+        n_txt = font_small.render("PLAY NEXT", True, (255, 255, 255))
+        screen.blit(n_txt, n_txt.get_rect(center=next_rect.center))
+
+        # Add to End Button (Blue)
+        end_col = (80, 150, 200) if end_rect.collidepoint(mouse_pos) else (60, 100, 150)
+        pygame.draw.rect(screen, end_col, end_rect, border_radius=5)
+        e_txt = font_small.render("ADD TO END", True, (255, 255, 255))
+        screen.blit(e_txt, e_txt.get_rect(center=end_rect.center))
+
+    screen.set_clip(None)
+
+    # Return Button
+    ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN TO PACKS", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
+
+
+def draw_saved_games_page(screen, games, scroll_y, return_rect, import_rect, clip_rect, track_rect, thumb_rect,
+                          max_scroll):
     # 1. Background
     screen.fill((30, 30, 35))
     for row in range(8):
@@ -2064,7 +2415,6 @@ def draw_saved_games_page(screen, games, scroll_y, return_rect,import_rect):
     screen.blit(imp_txt, imp_txt.get_rect(center=import_rect.center))
 
     # 3. SET THE SCISSORS (The Window Pane)
-    clip_rect = pygame.Rect(0, 130, SCREEN_WIDTH, SCREEN_HEIGHT - 250)
     screen.set_clip(clip_rect)
 
     # 4. Draw the Game Slots dynamically inside the elevator
@@ -2108,13 +2458,22 @@ def draw_saved_games_page(screen, games, scroll_y, return_rect,import_rect):
     # 5. REMOVE THE SCISSORS
     screen.set_clip(None)
 
+    # --- THE INTERACTABLE SCROLLBAR ---
+    if max_scroll > 0:
+        # Draw the Track
+        pygame.draw.rect(screen, (40, 40, 45), track_rect, border_radius=6)
+        pygame.draw.rect(screen, (60, 60, 65), track_rect, 1, border_radius=6)
+
+        # Draw the Thumb
+        thumb_col = (180, 180, 200) if thumb_rect.collidepoint(mouse_pos) else (120, 120, 140)
+        pygame.draw.rect(screen, thumb_col, thumb_rect, border_radius=6)
+
     # 6. Return Button (Drawn AFTER the scissors so it sits at the bottom safely)
     ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
     pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
     pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
     ret_txt = font_text.render("RETURN", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
-
 
 def draw_paste_pgn_page(screen, status_msg: str, status_color: tuple, is_valid: bool, paste_rect, save_rect,
                         return_rect, input_rect, user_text: str, active: bool):
@@ -2370,6 +2729,87 @@ def draw_side_menu(screen, show_notation: bool,is_paused:bool):
     screen.blit(menu_txt, menu_txt.get_rect(center=MENU_BTN_RECT.center))
 
 
+def draw_mini_player(screen):
+    global MINI_PLAYER_UI_STATE
+    if MUSIC_MANAGER is None or MUSIC_MANAGER.state == music_manager.MediaPlayerState.OUTSIDE\
+            or not MUSIC_MANAGER.does_user_allow():
+        return
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_small = pygame.font.SysFont("Arial", 16, bold=True)
+    font_symbols = pygame.font.SysFont("Arial", 20, bold=True)
+    font_time = pygame.font.SysFont("Arial", 16, bold=False)
+
+    # 1. Background Box under the Board
+    pygame.draw.rect(screen, (40, 40, 45), BOTTOM_PANEL_BG)
+    pygame.draw.line(screen, (80, 80, 80), (BOTTOM_PANEL_BG.x, BOTTOM_PANEL_BG.y),
+                     (BOTTOM_PANEL_BG.right, BOTTOM_PANEL_BG.y), 2)
+
+    track = MUSIC_MANAGER.get_current_track()
+    if not track: return
+
+    # 2. Left Side: Song Name & Time
+    name = track.name.replace("_", " ")
+    txt = font_small.render(name[:30], True, (220, 220, 220))
+    screen.blit(txt, (BOTTOM_PANEL_BG.x + 20, BOTTOM_PANEL_BG.y + 20))
+
+    total_seconds = track.length
+    if MINI_PLAYER_UI_STATE["is_dragging"]:
+        current_seconds = total_seconds * MINI_PLAYER_UI_STATE["drag_percent"]
+    else:
+        current_seconds = MUSIC_MANAGER.get_timestamp_seconds()
+
+    current_seconds = min(current_seconds, total_seconds)
+
+    cur_min, cur_sec = int(current_seconds // 60), int(current_seconds % 60)
+    tot_min, tot_sec = int(total_seconds // 60), int(total_seconds % 60)
+
+    time_str = f"{cur_min}:{cur_sec:02d} / {tot_min}:{tot_sec:02d}"
+    time_surf = font_time.render(time_str, True, (150, 150, 150))
+    screen.blit(time_surf, (BOTTOM_PANEL_BG.x + 20, BOTTOM_PANEL_BG.y + 45))
+
+    # 3. Left Side: Add Songs Button (Dead)
+    btn_col = (80, 80, 90) if ADD_SONGS_BTN.collidepoint(mouse_pos) else (60, 60, 70)
+    pygame.draw.rect(screen, btn_col, ADD_SONGS_BTN, border_radius=5)
+    pygame.draw.rect(screen, (120, 120, 120), ADD_SONGS_BTN, 1, border_radius=5)
+    add_txt = font_small.render("+ ADD SONGS", True, (180, 180, 180))
+    screen.blit(add_txt, add_txt.get_rect(center=ADD_SONGS_BTN.center))
+
+    # 4. Center Controls
+    p_col = (100, 150, 200) if MINI_PREV_BTN.collidepoint(mouse_pos) else (80, 120, 160)
+    pygame.draw.rect(screen, p_col, MINI_PREV_BTN, border_radius=10)
+
+    pl_col = (100, 200, 100) if MINI_PLAY_BTN.collidepoint(mouse_pos) else (80, 160, 80)
+    pygame.draw.rect(screen, pl_col, MINI_PLAY_BTN, border_radius=10)
+
+    n_col = (100, 150, 200) if MINI_NEXT_BTN.collidepoint(mouse_pos) else (80, 120, 160)
+    pygame.draw.rect(screen, n_col, MINI_NEXT_BTN, border_radius=10)
+
+    screen.blit(font_symbols.render("|<", True, (255, 255, 255)), (MINI_PREV_BTN.x + 10, MINI_PREV_BTN.y + 7))
+    play_sym = "||" if MUSIC_MANAGER.state == music_manager.MediaPlayerState.PLAYING else ">"
+    screen.blit(font_symbols.render(play_sym, True, (255, 255, 255)), (MINI_PLAY_BTN.x + 14, MINI_PLAY_BTN.y + 7))
+    screen.blit(font_symbols.render(">|", True, (255, 255, 255)), (MINI_NEXT_BTN.x + 10, MINI_NEXT_BTN.y + 7))
+
+    # 5. Center: Interactable Progress Bar
+    bar_hover = MINI_PROGRESS_BAR.collidepoint(mouse_pos) or MINI_PLAYER_UI_STATE["is_dragging"]
+    bg_col = (70, 70, 70) if bar_hover else (50, 50, 50)
+    pygame.draw.rect(screen, bg_col, MINI_PROGRESS_BAR, border_radius=5)
+
+    if total_seconds > 0:
+        percentage = current_seconds / total_seconds
+        fill_width = int(MINI_PROGRESS_BAR.width * percentage)
+        fill_width = max(0, min(fill_width, MINI_PROGRESS_BAR.width))
+
+        if fill_width > 0:
+            fill_rect = pygame.Rect(MINI_PROGRESS_BAR.x, MINI_PROGRESS_BAR.y, fill_width, MINI_PROGRESS_BAR.height)
+            pygame.draw.rect(screen, (100, 150, 200), fill_rect, border_radius=5)
+
+        if bar_hover:
+            handle_x = MINI_PROGRESS_BAR.x + fill_width
+            pygame.draw.circle(screen, (255, 255, 255), (handle_x, MINI_PROGRESS_BAR.centery), 7)
+
+
 def draw_live_diary(screen, move_log):
     """Paints the move history on the FAR LEFT."""
     pygame.draw.rect(screen, (25, 25, 30), (0, 0, SIDE_PANEL_WIDTH, SCREEN_HEIGHT))
@@ -2400,7 +2840,6 @@ def draw_live_diary(screen, move_log):
 def get_piece_image(piece: ChessPiece, cache):
     return get_piece_image_with_color_and_type(piece.color, piece.type, cache)
 
-
 def get_piece_image_with_color_and_type(color, piece_type, cache):
     key = (color, piece_type)
     if key not in cache:
@@ -2414,7 +2853,6 @@ def get_piece_image_with_color_and_type(color, piece_type, cache):
             img.fill((255, 0, 0) if color == ChessColor.WHITE else (0, 0, 255))
             cache[key] = img
     return cache[key]
-
 
 # <editor-fold desc="PROMOTION MENU">
 def draw_promotion_menu(screen, color: ChessColor, cache):
@@ -2469,13 +2907,11 @@ def draw_piece(screen, piece: ChessPiece, cache):
     rect = img.get_rect(center=(center_x, center_y))
     screen.blit(img, rect)
 
-
 def draw_pieces(screen, board: Board, cache, dragged_piece=None):
     for piece in board.get_all_pieces():
         # Do not draw the piece if it is currently being dragged!
         if piece is not dragged_piece:
             draw_piece(screen, piece, cache)
-
 
 def highlight_square(screen, square: SquarePosition, color: tuple, alpha: int = 125, thickness: int = 8):
     if square is None: return
@@ -2496,7 +2932,7 @@ def get_square_center(pos: SquarePosition):
     y = pos.row * SQUARE_SIZE + SQUARE_SIZE // 2
     return x, y
 
-def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition, color, padding=15, thickness=5):
+def draw_arrow(screen, start_square: SquarePosition, end_square: SquarePosition, color, padding=15, thickness=6):
     # THE MAGIC MIRROR
     v_start_r, v_start_c = get_visual_row_col(start_square.row, start_square.col)
     v_end_r, v_end_c = get_visual_row_col(end_square.row, end_square.col)
@@ -2920,7 +3356,7 @@ def get_random_bot_move(board, ai_color: ChessColor): #PLACEHOLDER
     # 3. Close eyes, reach into bucket, pull out a random move
     chosen_move = random.choice(all_possible_moves)
 
-    # 4. If by pure luck the random move is a pawn promotion, default to a Queen!
+    # 4. If by pure luck the random move is a pawn promotion, default_pack to a Queen!
     if chosen_move.move_type == MoveType.PROMOTION:
         chosen_move.promotion_choice = ChessPieceType.QUEEN
 
@@ -3017,6 +3453,8 @@ def get_bot_move(board, ai_color:ChessColor,depth):
             return get_random_bot_move(board, ai_color)
         case -3: #should be 3
             print("make sure to put here the neural network when you get there")
+        case 9999:
+            return stockfish.get_stockfish_move(board)
         case _:
             return bot.ai_get_best_move_cpp(board, ai_color, depth=depth)
 
@@ -3078,61 +3516,152 @@ def run_waiting_room_screen():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
-def run_audio_settings_screen():
+
+def run_view_pack_screen(pack_name):
     global SCREEN, FPS
     pygame_clock = pygame.time.Clock()
-    is_dragging_slider = False
+
+    # Load the tracks into memory so we can show them
+    if pack_name not in music_manager.LOADED_PACKS:
+        MUSIC_MANAGER.load_music_pack(pack_name)
+    tracks = music_manager.LOADED_PACKS[pack_name].tracks
+
+    scroll_y = 0
+    scroll_speed = 30
+    max_scroll = max(0, (len(tracks) * 70) - (SCREEN_HEIGHT - 220) + 20)
+    clip_rect = pygame.Rect(0, 120, SCREEN_WIDTH, SCREEN_HEIGHT - 220)
+
+    track_rects = []  # The painter will fill this for us
 
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
 
-            # --- MOUSE DOWN ---
+            if event.type == pygame.MOUSEWHEEL:
+                scroll_y -= event.y * scroll_speed
+                scroll_y = max(0, min(scroll_y, max_scroll))
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if RETURN_BTN_RECT.collidepoint(event.pos):
                     return MenuSignal.BACK
 
-                # Check Buttons
-                for i, rect in enumerate(AUDIO_SETTINGS_RECTS):
-                    if rect.collidepoint(event.pos):
-                        btn_name = AUDIO_SETTINGS_OPTIONS[i]
+                if clip_rect.collidepoint(event.pos):
+                    for item in track_rects:
+                        if item["next"].collidepoint(event.pos):
+                            MUSIC_MANAGER.add_track_next(item["track"])
+                            print(f"Added {item['track'].name} to play next.")
+                        elif item["end"].collidepoint(event.pos):
+                            MUSIC_MANAGER.add_track_last(item["track"])
+                            print(f"Added {item['track'].name} to end of playlist.")
 
-                        # THE FIX: Listen for the new button names!
-                        if btn_name == "Master Playing":
-                            PREFERENCES["master_mute"] = not PREFERENCES["master_mute"]
-                            play_music(LAST_REQUESTED_MUSIC)  # Instantly mute/unmute
-                        elif btn_name == "Music Playing":
-                            PREFERENCES["music_mute"] = not PREFERENCES["music_mute"]
-                            play_music(LAST_REQUESTED_MUSIC)
-                        elif btn_name == "SFX Playing":
-                            PREFERENCES["sfx_mute"] = not PREFERENCES["sfx_mute"]
+        draw_view_pack_page(SCREEN, pack_name, tracks, scroll_y, track_rects)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
 
-                        save_preferences()
 
-                # Check Slider Grab
-                if VOLUME_TRACK_RECT.collidepoint(event.pos):
+def run_audio_settings_screen():
+    global SCREEN, FPS
+    pygame_clock = pygame.time.Clock()
+    is_dragging_slider = False
+
+    ui_rects = {
+        "settings": [],
+        "volume": None,
+        "clear": None,
+        "packs": []
+    }
+
+    # Left Column (Shrunk down to 320x50, tighter spacing)
+    left_center_x = SCREEN_WIDTH // 4
+    start_y = 200
+    for i in range(4):
+        rect = pygame.Rect(0, 0, 320, 50)
+        rect.center = (left_center_x, start_y + (i * 65))
+        ui_rects["settings"].append(rect)
+
+    # Volume Slider
+    vol_rect = pygame.Rect(0, 0, 320, 50)
+    vol_rect.center = (left_center_x, start_y + (4 * 65))
+    ui_rects["volume"] = vol_rect
+
+    # Right Column (Shrunk down to 360x45, tighter spacing)
+    right_center_x = (SCREEN_WIDTH * 3) // 4
+
+    clear_rect = pygame.Rect(0, 0, 360, 45)
+    clear_rect.center = (right_center_x, 200)
+    ui_rects["clear"] = clear_rect
+
+    pack_start_y = 260
+    for i, pack_name in enumerate(music_manager.MUSIC_PACK_NAMES):
+        y = pack_start_y + (i * 60)
+
+        x = right_center_x - 180
+        main_rect = pygame.Rect(x, y, 360, 50)
+        add_rect = pygame.Rect(main_rect.right - 190, y + 8, 85, 34)
+        view_rect = pygame.Rect(main_rect.right - 95, y + 8, 85, 34)
+
+        ui_rects["packs"].append({
+            "pack": pack_name,
+            "main": main_rect,
+            "add": add_rect,
+            "view": view_rect
+        })
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if RETURN_BTN_RECT.collidepoint(event.pos):
+                    return MenuSignal.BACK
+
+                if ui_rects["volume"].collidepoint(event.pos):
                     is_dragging_slider = True
 
-            # --- MOUSE UP ---
+                for i, rect in enumerate(ui_rects["settings"]):
+                    if rect.collidepoint(event.pos):
+                        btn_name = AUDIO_SETTINGS_OPTIONS[i]
+                        if "Master" in btn_name:
+                            PREFERENCES["master_mute"] = not PREFERENCES["master_mute"]
+                        elif "Music" in btn_name:
+                            PREFERENCES["music_mute"] = not PREFERENCES["music_mute"]
+                        elif "SFX" in btn_name:
+                            PREFERENCES["sfx_mute"] = not PREFERENCES["sfx_mute"]
+
+                        play_music(LAST_REQUESTED_MUSIC)
+                        save_preferences()
+
+                if ui_rects["clear"].collidepoint(event.pos):
+                    MUSIC_MANAGER.clear_playlist()
+                    print("Playlist Cleared.")
+
+                for item in ui_rects["packs"]:
+                    if item["add"].collidepoint(event.pos):
+                        MUSIC_MANAGER.add_pack(item["pack"])
+                        print(f"Added all tracks from {item['pack']}.")
+                    elif item["view"].collidepoint(event.pos):
+                        result = run_view_pack_screen(item["pack"])
+                        if result == MenuSignal.QUIT:
+                            return MenuSignal.QUIT
+
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 if is_dragging_slider:
                     is_dragging_slider = False
                     save_preferences()
 
-            # --- MOUSE MOTION (The Drag) ---
             if event.type == pygame.MOUSEMOTION:
                 if is_dragging_slider:
-                    # ELI5: How far into the track is the mouse? Divide by total width to get %.
-                    relative_x = event.pos[0] - VOLUME_TRACK_RECT.x
-
-                    # Clamp it so they can't drag it to -500% or 2000%
-                    new_vol = max(0.0, min(1.0, relative_x / VOLUME_TRACK_RECT.width))
-
+                    vol_rect = ui_rects["volume"]
+                    relative_x = event.pos[0] - vol_rect.x
+                    new_vol = max(0.0, min(1.0, relative_x / vol_rect.width))
                     PREFERENCES["volume"] = new_vol
-                    update_audio_volume()  # Apply instantly to the DJ!
+                    update_audio_volume()
+                    if MUSIC_MANAGER:
+                        MUSIC_MANAGER.set_volume(new_vol)
 
-        draw_audio_settings_page(SCREEN)
+        draw_audio_settings_page(SCREEN, ui_rects)
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
@@ -3178,8 +3707,162 @@ def run_video_settings_screen():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
+
+def run_bot_selection_screen(is_launching):
+    global SCREEN
+    pygame_clock = pygame.time.Clock()
+
+    ui_rects = {
+        "colors": {
+            "White": pygame.Rect((SCREEN_WIDTH // 2) - 160, 160, 150, 50),
+            "Black": pygame.Rect((SCREEN_WIDTH // 2) + 10, 160, 150, 50)
+        },
+        "quick_start": pygame.Rect((SCREEN_WIDTH // 2) - 200, 480, 30, 30),
+        "confirm": pygame.Rect((SCREEN_WIDTH // 2) + 20, 550, 200, 60),
+        "cancel": pygame.Rect((SCREEN_WIDTH // 2) - 220, 550, 200, 60)
+    }
+
+    depths = [1, -1, 3, 4, 5, 6, 9999]
+
+    scroll_y = 0
+    scroll_speed = 30
+    start_y = 290
+
+    # We tightened the scissors! It now perfectly hugs the two columns of bots.
+    clip_rect = pygame.Rect((SCREEN_WIDTH // 2) - 280, 270, 560, 200)
+
+    total_rows = (len(depths) + 1) // 2
+    total_content_height = total_rows * 60
+    max_scroll = max(0, total_content_height - clip_rect.height + 20)
+
+    # --- SCROLLBAR STATE ---
+    scrollbar_dragging = False
+    drag_offset_y = 0
+
+    while True:
+        # Calculate scrollbar positions every frame so the mouse can interact with them
+        track_rect = pygame.Rect(clip_rect.right + 10, clip_rect.y + 5, 12, clip_rect.height - 10)
+
+        if max_scroll > 0:
+            thumb_height = max(40, (clip_rect.height / total_content_height) * track_rect.height)
+            thumb_y = track_rect.y + (scroll_y / max_scroll) * (track_rect.height - thumb_height)
+            thumb_rect = pygame.Rect(track_rect.x, thumb_y, track_rect.width, thumb_height)
+        else:
+            thumb_rect = None
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+            # Catch the mouse wheel!
+            if event.type == pygame.MOUSEWHEEL:
+                scroll_y -= event.y * scroll_speed
+                scroll_y = max(0, min(scroll_y, max_scroll))
+
+            # --- INTERACTABLE SCROLLBAR: DRAG START ---
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if thumb_rect and thumb_rect.collidepoint(event.pos):
+                    scrollbar_dragging = True
+                    drag_offset_y = event.pos[1] - thumb_rect.y  # Where exactly on the thumb did they grab?
+                elif max_scroll > 0 and track_rect.collidepoint(event.pos):
+                    # They clicked the track but missed the thumb -> Jump scroll!
+                    if event.pos[1] > thumb_rect.bottom:
+                        scroll_y = min(max_scroll, scroll_y + clip_rect.height)
+                    elif event.pos[1] < thumb_rect.top:
+                        scroll_y = max(0, scroll_y - clip_rect.height)
+
+                # 1. Cancel
+                elif ui_rects["cancel"].collidepoint(event.pos):
+                    return MenuSignal.BACK
+
+                # 2. Confirm
+                elif ui_rects["confirm"].collidepoint(event.pos):
+                    save_preferences()
+                    return MenuSignal.START_GAME if is_launching else MenuSignal.BACK
+
+                # 3. Quick Start Toggle
+                elif ui_rects["quick_start"].collidepoint(event.pos):
+                    PREFERENCES["quick_start_bot"] = not PREFERENCES["quick_start_bot"]
+
+                # 4. Color Selection
+                for color_name, rect in ui_rects["colors"].items():
+                    if rect.collidepoint(event.pos):
+                        PREFERENCES["player_color"] = color_name
+
+                # 5. Bot Selection (Only click if inside the window pane!)
+                if clip_rect.collidepoint(event.pos):
+                    for i, depth in enumerate(depths):
+                        col = i % 2
+                        row = i // 2
+                        x = (SCREEN_WIDTH // 2) - 260 + (col * 270)
+                        y = start_y + (row * 60) - scroll_y
+                        bot_rect = pygame.Rect(x, y, 250, 45)
+
+                        if bot_rect.collidepoint(event.pos):
+                            PREFERENCES["bot_depth"] = depth
+
+            # --- INTERACTABLE SCROLLBAR: DRAG RELEASE ---
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                scrollbar_dragging = False
+
+            # --- INTERACTABLE SCROLLBAR: DRAG MOTION ---
+            if event.type == pygame.MOUSEMOTION:
+                if scrollbar_dragging and max_scroll > 0:
+                    new_thumb_y = event.pos[1] - drag_offset_y
+                    # Keep it strictly inside the track
+                    new_thumb_y = max(track_rect.y, min(new_thumb_y, track_rect.bottom - thumb_height))
+                    # Reverse math: Turn screen position back into scroll_y
+                    scroll_percent = (new_thumb_y - track_rect.y) / (track_rect.height - thumb_height)
+                    scroll_y = scroll_percent * max_scroll
+
+        draw_bot_selection_page(SCREEN, ui_rects, depths, is_launching, scroll_y, clip_rect, track_rect, thumb_rect,
+                                max_scroll)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
+def run_home_screen():
+    global SCREEN
+    pygame_clock = pygame.time.Clock()
+    play_music("menu_music")
+    update_window_size(in_game=False)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if START_BTN_RECT.collidepoint(event.pos):
+
+                    # --- THE INTERCEPT ---
+                    if PREFERENCES["game_mode"] == "Singleplayer":
+                        # If Quick Start is OFF, pull them into the Bot Room
+                        if not PREFERENCES.get("quick_start_bot", False):
+                            result = run_bot_selection_screen(is_launching=True)
+                            if result == MenuSignal.START_GAME:
+                                return MenuSignal.START_GAME
+                            elif result == MenuSignal.QUIT:
+                                return MenuSignal.QUIT
+                            # If they hit cancel, we do nothing and stay on the home screen!
+                        else:
+                            # Quick start is ON, let them through immediately!
+                            return MenuSignal.START_GAME
+                    else:
+                        # Multiplayer or Online, let them right through!
+                        return MenuSignal.START_GAME
+
+                elif QUIT_BTN_RECT.collidepoint(event.pos):
+                    return MenuSignal.QUIT
+                elif SETTINGS_BTN_RECT.collidepoint(event.pos):
+                    result = run_settings_screen()
+                    if result == MenuSignal.QUIT:
+                        return MenuSignal.QUIT
+
+        draw_home_page(SCREEN)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
 def run_general_settings_screen():
-    # We must call in STARTING_TIME as global so we can actually change it!
     global SCREEN, AUTO_SAVE, STARTING_TIME
     pygame_clock = pygame.time.Clock()
 
@@ -3189,65 +3872,34 @@ def run_general_settings_screen():
                 return MenuSignal.QUIT
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # 1. Return Button
                 if RETURN_BTN_RECT.collidepoint(event.pos):
-                    return
+                    return MenuSignal.BACK
 
-                # 2. Dynamic Settings Buttons
                 for i, rect in enumerate(GENERAL_SETTINGS_RECTS):
                     if rect.collidepoint(event.pos):
                         btn_name = GENERAL_SETTINGS_OPTIONS[i]
 
                         if btn_name == "Auto Save":
                             PREFERENCES["auto_save"] = not PREFERENCES["auto_save"]
-
                         elif btn_name == "Time Control":
                             times = [60, 180, 300, 600, 1800]
                             curr = PREFERENCES["starting_time"]
-                            # Cycle to next time
                             idx = times.index(curr) if curr in times else 2
                             PREFERENCES["starting_time"] = times[(idx + 1) % len(times)]
-
-                            # Update the actual game clocks
                             for color in [ChessColor.WHITE, ChessColor.BLACK]:
                                 CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
-
-
                         elif btn_name == "Game Mode":
-
-                            # The new 3-way cycle!
                             modes = ["Singleplayer", "Multiplayer", "Online"]
                             curr = PREFERENCES["game_mode"]
-                            # Find where we are in the list, and go to the next one
                             idx = modes.index(curr) if curr in modes else 0
                             PREFERENCES["game_mode"] = modes[(idx + 1) % len(modes)]
-
-
-                        elif btn_name == "Player Color":
-                            if PREFERENCES["game_mode"] == "Singleplayer":
-                                if PREFERENCES["player_color"] == "White":
-                                    PREFERENCES["player_color"] = "Black"
-                                else:
-                                    PREFERENCES["player_color"] = "White"
-
-
-
-
-
-
-                        elif btn_name == "Bot Depth":
-                            depths = [1,-1 #Alperon
-                                ,3,4,5,6]
-                            curr = PREFERENCES["bot_depth"]
-                            idx = depths.index(curr) if curr in depths else 2
-                            PREFERENCES["bot_depth"] = depths[(idx + 1) % len(depths)]
-
-                        elif btn_name == "Bot Time":
-                            times = [0.1,0.3, 0.5, 1.0,2.0]
-                            curr = PREFERENCES["bot_thinking_time"]
-                            idx = times.index(curr) if curr in times else 1
-                            PREFERENCES["bot_thinking_time"] = times[(idx + 1) % len(times)]
+                        elif btn_name == "Bot Setup" and PREFERENCES["game_mode"] == "Singleplayer":
+                            # OPEN THE NEW ROOM!
+                            result = run_bot_selection_screen(is_launching=False)
+                            if result == MenuSignal.QUIT:
+                                return MenuSignal.QUIT
                         save_preferences()
+
         draw_general_settings_page(SCREEN)
         pygame.display.flip()
         pygame_clock.tick(FPS)
@@ -3312,8 +3964,19 @@ def run_server_browser_screen():
         pygame_clock.tick(FPS)
 
 def run_replay_screen(pgn_string: str):
-    global SCREEN, IMAGE_CACHE, BOARD
+    global SCREEN, IMAGE_CACHE, BOARD,CURRENT_MUSIC
     pygame_clock = pygame.time.Clock()
+
+    # --- THE FIX: Invite the DJ into the room! ---
+    if CURRENT_MUSIC == "menu_music":
+        dj.music.stop()
+        CURRENT_MUSIC = None
+
+    if not MUSIC_MANAGER.current_playlist:
+        MUSIC_MANAGER.add_pack("default_pack")
+
+    update_window_size(in_game=True)
+    MUSIC_MANAGER.continue_playlist()  # This wakes up the UI!
 
     # 1. Use the global BOARD instead of creating a fake one!
     BOARD.load_fen(STARTING_POSITION)
@@ -3328,6 +3991,8 @@ def run_replay_screen(pgn_string: str):
     right_click_start = None
 
     while True:
+        update_media_player()
+
         # Determine what text to show for the current move
         if current_move_index == 0:
             move_text = "Start"
@@ -3337,6 +4002,9 @@ def run_replay_screen(pgn_string: str):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
+
+            if handle_media_player_event(event):
+                continue
 
             # --- KEYBOARD SHORTCUTS ---
             if event.type == pygame.KEYDOWN:
@@ -3360,6 +4028,11 @@ def run_replay_screen(pgn_string: str):
 
                     # 2. Button Intercepts
                     if REPLAY_MENU_BTN.collidepoint(event.pos):
+                        # --- THE FIX: Clean up the room before going back to the library! ---
+                        MUSIC_MANAGER.exit_music()  # Tell the DJ to pack up
+                        play_music("menu_music")  # Turn the lobby elevator music back on
+                        update_window_size(in_game=False)  # Shrink the window back
+
                         return MenuSignal.BACK
 
                     elif REPLAY_NOTATION_BTN.collidepoint(event.pos):
@@ -3404,14 +4077,11 @@ def run_replay_screen(pgn_string: str):
             # --- DRAWING PHASE ---
             SCREEN.fill((0, 0, 0))
 
-            # 1. Draw the Left Room (The Time-Traveling Diary!)
             draw_live_diary(SCREEN, BOARD.move_log)
-
-            # 2. Draw the Center Room
             draw_board(SCREEN, show_notation)
-
-            # 3. Draw the Right Room
             draw_replay_side_menu(SCREEN, show_notation, move_text)
+            draw_mini_player(SCREEN)
+
 
             # Draw pieces using the global BOARD
             draw_pieces(SCREEN, BOARD, IMAGE_CACHE)
@@ -3531,7 +4201,22 @@ def run_saved_games_screen():
     return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 80, 300, 60)
     clip_rect = pygame.Rect(0, 130, SCREEN_WIDTH, SCREEN_HEIGHT - 250)
 
+    # --- SCROLLBAR STATE ---
+    scrollbar_dragging = False
+    drag_offset_y = 0
+
     while True:
+        # Calculate scrollbar positions every frame
+        # Anchored to the far right side of the screen, just past the cards
+        track_rect = pygame.Rect(SCREEN_WIDTH - 30, clip_rect.y + 5, 12, clip_rect.height - 10)
+
+        if max_scroll > 0:
+            thumb_height = max(40, (clip_rect.height / total_content_height) * track_rect.height)
+            thumb_y = track_rect.y + (scroll_y / max_scroll) * (track_rect.height - thumb_height)
+            thumb_rect = pygame.Rect(track_rect.x, thumb_y, track_rect.width, thumb_height)
+        else:
+            thumb_rect = None
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
@@ -3539,15 +4224,28 @@ def run_saved_games_screen():
             # --- THE SCROLL WHEEL ---
             if event.type == pygame.MOUSEWHEEL:
                 scroll_y -= event.y * scroll_speed
-                # Clamp the elevator so it doesn't break the roof or floor
                 scroll_y = max(0, min(scroll_y, max_scroll))
 
+            # --- MOUSE CLICKS ---
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # 1. Return Button
-                if return_rect.collidepoint(event.pos):
+
+                # 1. INTERACTABLE SCROLLBAR: DRAG START
+                if thumb_rect and thumb_rect.collidepoint(event.pos):
+                    scrollbar_dragging = True
+                    drag_offset_y = event.pos[1] - thumb_rect.y
+                elif max_scroll > 0 and track_rect.collidepoint(event.pos):
+                    # Jump scroll!
+                    if event.pos[1] > thumb_rect.bottom:
+                        scroll_y = min(max_scroll, scroll_y + clip_rect.height)
+                    elif event.pos[1] < thumb_rect.top:
+                        scroll_y = max(0, scroll_y - clip_rect.height)
+
+                # 2. Return Button
+                elif return_rect.collidepoint(event.pos):
                     return MenuSignal.BACK
-                # NEW IMPORT DOOR
-                if import_rect.collidepoint(event.pos):
+
+                # 3. Import Button
+                elif import_rect.collidepoint(event.pos):
                     result = run_paste_pgn_screen()
                     # We must refresh the Librarian when we get back so the new game shows up!
                     games = get_saved_games_data()
@@ -3557,8 +4255,8 @@ def run_saved_games_screen():
                     if result == MenuSignal.QUIT:
                         return MenuSignal.QUIT
 
-                # 2. Check game buttons IF click is inside the window pane
-                if clip_rect.collidepoint(event.pos):
+                # 4. Check game buttons IF click is inside the window pane
+                elif clip_rect.collidepoint(event.pos):
                     for i, game in enumerate(games):
                         # Calculate exact hitbox based on current scroll
                         y = start_y + (i * card_height) - scroll_y
@@ -3579,11 +4277,9 @@ def run_saved_games_screen():
                             print(f"Copied {game['filename']} to clipboard!")
 
                         elif delete_rect.collidepoint(event.pos):
-
                             # 1. Safely delete the file
                             filepath = os.path.join(DIRECTORY_OF_SAVED_GAMES, game['filename'])
                             if os.path.exists(filepath):
-                                print(filepath)
                                 save_preferences()
                                 os.remove(filepath)
                                 game_number = get_next_available_game_number()
@@ -3593,14 +4289,28 @@ def run_saved_games_screen():
                             # 2. Tell the Librarian to refresh the list!
                             games = get_saved_games_data()
 
-                            # 3. Recalculate the floor (in case deleting a game made the list shorter)
+                            # 3. Recalculate the floor
                             total_content_height = len(games) * card_height
                             max_scroll = max(0, total_content_height - window_pane_height + 20)
 
                             # 4. Snap the elevator back up if we were at the very bottom
                             scroll_y = min(scroll_y, max_scroll)
 
-        draw_saved_games_page(SCREEN, games, scroll_y, return_rect,import_rect)
+            # --- INTERACTABLE SCROLLBAR: DRAG RELEASE ---
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                scrollbar_dragging = False
+
+            # --- INTERACTABLE SCROLLBAR: DRAG MOTION ---
+            if event.type == pygame.MOUSEMOTION:
+                if scrollbar_dragging and max_scroll > 0:
+                    new_thumb_y = event.pos[1] - drag_offset_y
+                    new_thumb_y = max(track_rect.y, min(new_thumb_y, track_rect.bottom - thumb_height))
+                    scroll_percent = (new_thumb_y - track_rect.y) / (track_rect.height - thumb_height)
+                    scroll_y = scroll_percent * max_scroll
+
+        # Pass the new scrollbar data to the painter!
+        draw_saved_games_page(SCREEN, games, scroll_y, return_rect, import_rect, clip_rect, track_rect, thumb_rect,
+                              max_scroll)
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
@@ -3626,7 +4336,7 @@ def run_settings_screen():
                             result = run_general_settings_screen()
                         elif btn_name == "Video Settings":
                             result = run_video_settings_screen()
-                        elif btn_name == "Audio Settings":
+                        elif btn_name == "Audio & Music":
                             result = run_audio_settings_screen()
                         else:
                             print(f"TODO: Open menu for {btn_name}")
@@ -3642,47 +4352,33 @@ def run_settings_screen():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
-def run_home_screen():
-    global SCREEN
-    """The Waiting Room. You stay here until you click Start or Quit."""
-    pygame_clock = pygame.time.Clock()
-    play_music("menu_music")
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return MenuSignal.QUIT
-
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if START_BTN_RECT.collidepoint(event.pos):
-                    return MenuSignal.START_GAME
-                elif QUIT_BTN_RECT.collidepoint(event.pos):
-                    return MenuSignal.QUIT
-                elif SETTINGS_BTN_RECT.collidepoint(event.pos):
-                    result = run_settings_screen()
-                    if result == MenuSignal.QUIT:
-                        return MenuSignal.QUIT
-
-        draw_home_page(SCREEN)
-        pygame.display.flip()
-        pygame_clock.tick(FPS)
-
 #</editor-fold>
 
 # <editor-fold desc="MAIN">
 
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED,ONLINE_CONNECTION
+    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED,ONLINE_CONNECTION,MUSIC_MANAGER
 
     load_preferences()
     pygame.init()
     dj.init()
+
+    MUSIC_MANAGER = music_manager.MusicManager(PREFERENCES)
+
     bot.innit(chessColor=ChessColor, chessPieceType=ChessPieceType,
               move=Move, moveType=MoveType, squarePosition=SquarePosition)
 
+    stockfish.innit(
+        passed_move=Move,
+        passed_chess_piece_type=ChessPieceType,
+        passed_move_type=MoveType,
+        passed_square_position=SquarePosition,
+        passed_board_class=Board
+    )
+
     NOTATION_FONT = pygame.font.SysFont("Arial", 14, bold=True)
 
-    SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED | pygame.RESIZABLE)
+    update_window_size()
     pygame.display.set_caption("Chess")
     FPS = PREFERENCES['fps']
     DT = 1/FPS
@@ -3740,13 +4436,17 @@ def main():
     has_auto_saved = False
     ai_thinking_timer = 0  # Defined up here so nonlocal can see it!
 
+    # Mini Player timeline
+    is_dragging_timeline = False
+    dragged_percentage = 0.0
+
 
     # ==========================================
     # 3. THE CLEANUP CREW
     # ==========================================
     def reset_match(keep_connection=False):
         nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused, has_auto_saved, ai_thinking_timer, animation_state,ai_color
-        global BOARD_FLIPPED,ONLINE_CONNECTION
+        global BOARD_FLIPPED,ONLINE_CONNECTION,CURRENT_MUSIC
         PLAYERS[ChessColor.WHITE].lost = False
         PLAYERS[ChessColor.BLACK].lost = False
         BOARD.is_draw = False
@@ -3852,7 +4552,17 @@ def main():
         else:
             BOARD_FLIPPED = False
 
-        play_music("board_music")
+        if CURRENT_MUSIC == "menu_music":
+            dj.music.stop()
+            CURRENT_MUSIC = None
+
+        # Start the radio. This changes the state to PLAYING so the Mini Player draws!
+        if not MUSIC_MANAGER.current_playlist:
+            MUSIC_MANAGER.add_pack("default_pack")
+
+        update_window_size(in_game=True)
+
+
 
 
     def undo_move():
@@ -3896,7 +4606,11 @@ def main():
     elif home_screen_action == MenuSignal.START_GAME:
         reset_match()
 
+    MUSIC_MANAGER.continue_playlist()
+
     while running:
+        update_media_player()
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -3908,13 +4622,12 @@ def main():
                 # --- FULLSCREEN TOGGLE ---
                 elif event.key == pygame.K_F11:
                     is_fullscreen = not is_fullscreen
-                    if is_fullscreen:
-                        # Turn on Fullscreen AND the Projector
-                        SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT),
-                                                         pygame.FULLSCREEN | pygame.SCALED)
-                    else:
-                        # Go back to Windowed Mode with the Projector
-                        SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SCALED)
+                    update_window_size(force_fullscreen=is_fullscreen)
+
+
+            #finished the song and moving on to the next.
+            if handle_media_player_event(event):
+                continue
 
             # ==========================================
             # THE PICK UP (Mouse Down)
@@ -4005,11 +4718,13 @@ def main():
                         ONLINE_CONNECTION.send_message("LEAVE") if ONLINE_CONNECTION else None
                         ONLINE_CONNECTION = None
 
+                        MUSIC_MANAGER.exit_music()
                         action = run_home_screen()
                         if action == MenuSignal.QUIT:
                             running = False
                         elif action == MenuSignal.START_GAME:
                             reset_match()
+                            MUSIC_MANAGER.continue_playlist()
                         continue
 
                     # If the click made it here, they are interacting with the board.
@@ -4020,6 +4735,7 @@ def main():
                     # If the game is paused, trash the click right here.
                     if is_paused:
                         continue
+
 
                     # 2. IS THE GAME OVER? THE GLASS CASE BOUNCER
                     if game_over_btn_rect is not None:
@@ -4181,6 +4897,8 @@ def main():
         draw_live_diary(SCREEN, BOARD.move_log)
         draw_board(SCREEN, show_notation)
 
+        draw_mini_player(SCREEN)
+
         # THE MAGIC TRICK: Hide the piece if we are dragging it OR animating it!
         hidden_piece = picking_piece if is_dragging else animation_state["piece"]
         draw_pieces(SCREEN, BOARD, IMAGE_CACHE, dragged_piece=hidden_piece)
@@ -4310,6 +5028,7 @@ def main():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
+    MUSIC_MANAGER.cleanup()
     quit_game()
 
 

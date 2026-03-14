@@ -11,7 +11,7 @@ class Network:
         self.port = 5555
         self.addr = (self.server, self.port)
         self.sync_data = None
-        self.color = None # Give it a default empty value
+        self.color = None # Give it a default_pack empty value
         self.connect() # Just run the function! It will set self.color inside it.
 
 

@@ -1,16 +1,17 @@
 {
-    "game_counter": 4,
+    "game_counter": 3,
     "auto_save": true,
-    "starting_time": 180,
-    "game_mode": "Online",
-    "player_color": "Black",
-    "bot_depth": 4,
+    "starting_time": 600,
+    "game_mode": "Singleplayer",
+    "player_color": "White",
+    "bot_depth": -1,
     "bot_thinking_time": 0.5,
     "fps": 60,
     "animation_time": 0.2,
     "master_mute": false,
     "music_mute": false,
     "sfx_mute": false,
-    "volume": 0.29,
-    "sound_pack": "Default"
+    "volume": 0.4875,
+    "sound_pack": "Default",
+    "quick_start_bot": true
 }
