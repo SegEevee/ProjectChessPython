@@ -121,9 +121,42 @@ def get_uci_stockfish_move(fen_string: str) -> str:
     bot.set_fen_position(fen_string)
     return bot.get_best_move()
 
+def apply_skill_settings(elo, depth=15):
+    """
+    The Bouncer. Forces Stockfish to limit its brainpower.
+    """
+    # THE FIX: Modern Stockfish crashes if ELO is set below 1320!
+    # If the factory asks for 900, we silently bump it to 1320 to keep the engine alive.
+    safe_elo = max(1320, elo)
 
-def get_stockfish_move(board):
-    # Use the full FEN, not the core FEN!
+    # 9999 is our code for "God Mode"
+    if elo >= 9999:
+        bot.update_engine_parameters({"UCI_LimitStrength": False})
+        bot.set_depth(depth)
+    else:
+        # THE FIX: The exact dictionary key Stockfish demands is "UCI_Elo"
+        bot.update_engine_parameters({
+            "UCI_LimitStrength": True,
+            "UCI_Elo": safe_elo
+        })
+
+        # Even with low ELO, if Stockfish searches 15 moves deep, it will
+        # accidentally find brilliant tactics. We have to blindfold it a bit.
+        if safe_elo < 1500:
+            bot.set_depth(5)
+        elif safe_elo < 2000:
+            bot.set_depth(8)
+        else:
+            bot.set_depth(12)
+
+def get_stockfish_move(board, elo=9999, depth=15):
+    """
+    Gets a move from Stockfish, strictly obeying the ELO limit.
+    """
+    # 1. Wire up the brain settings before we ask for a move
+    apply_skill_settings(elo, depth)
+
+    # 2. Get the full FEN, not the core FEN!
     fen_string = board.generate_fen()
     best_uci_move = get_uci_stockfish_move(fen_string)
 
@@ -137,5 +170,15 @@ def get_stockfish_move(board):
 
 # --- Test ---
 if __name__ == "__main__":
+    # Let's test if the Noob brain works
     start_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-    print(f"YOUR Stockfish says: {get_uci_stockfish_move(start_fen)}")
+
+    # God Mode
+    bot.update_engine_parameters({"UCI_LimitStrength": "false"})
+    bot.set_depth(15)
+    print(f"God Mode says: {get_uci_stockfish_move(start_fen)}")
+
+    # 1300 ELO Mode
+    bot.update_engine_parameters({"UCI_LimitStrength": "true", "Elo": 1300})
+    bot.set_depth(5)
+    print(f"1300 ELO says: {get_uci_stockfish_move(start_fen)}")

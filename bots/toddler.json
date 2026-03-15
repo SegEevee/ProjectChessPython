@@ -1,0 +1,6 @@
+{
+    "name": "Toddler (Random)",
+    "type": "script",
+    "script_file": "toddler.py",
+    "function_name": "get_random_bot_move"
+}

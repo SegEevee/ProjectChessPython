@@ -1,0 +1,6 @@
+{
+    "name": "alperon",
+    "type": "script",
+    "script_file": "alperon.py",
+    "function_name": "get_move"
+}

@@ -1,0 +1,6 @@
+{
+    "name": "boga",
+    "type": "script",
+    "script_file": "boga.py",
+    "function_name": "get_move"
+}

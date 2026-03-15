@@ -1,8 +1,10 @@
 # <editor-fold desc="import..."
 import sys
 import os
+import random
 from mutagen.mp3 import MP3
 from enum import Enum
+
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'soloud'))
 import soloud
@@ -20,6 +22,7 @@ existing_songs: dict[str, float] = {
     "Checkmate_Relief": 0.7,
     "Behind_The_Screen": 0.8,
     "Endgame_Time!": 0.69,
+    "Endgame_Fantasy" : 0.8,
     "Music_To_Calculate_Like_Magnus": 0.8,
     "A_Pawn's_Dream" : 0.9,
 
@@ -321,6 +324,12 @@ class MusicManager:
         """
         if self.current_voice_handle is not None:
             self.sl.set_relative_play_speed(self.current_voice_handle, speed_multiplier)
+
+    def is_playlist_empty(self):
+        return not self.current_playlist
+
+    def shuffle_playlist(self):
+        random.shuffle(self.current_playlist)
 
     def cleanup(self):
         """Crucial: When the game closes, we must turn off the engine to free memory."""

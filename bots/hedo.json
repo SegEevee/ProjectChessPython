@@ -1,0 +1,6 @@
+{
+    "name": "hedo",
+    "type": "script",
+    "script_file": "hedo.py",
+    "function_name": "get_move"
+}

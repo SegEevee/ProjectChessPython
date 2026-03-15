@@ -1,0 +1,6 @@
+{
+    "name": "stockfish",
+    "type": "script",
+    "script_file": "stockfish.py",
+    "function_name": "get_move"
+}
