@@ -21,11 +21,11 @@ def init_bot(passed_Move, passed_MoveType, passed_ChessPieceType, passed_SquareP
                 with open(book_path, "r", encoding="utf-8") as f:
                     book_data = json.load(f)
                     PERSONAL_OPENING_BOOK.update(book_data)
-                print(f"📖 boga loaded opening book: {book_name}.json")
+                print(f"📖 boga_bot loaded opening book: {book_name}.json")
             except Exception as e:
-                print(f"❌ boga failed to read {book_name}.json: {e}")
+                print(f"❌ boga_bot failed to read {book_name}.json: {e}")
         else:
-            print(f"⚠️ boga could not find {book_name}.json")
+            print(f"⚠️ boga_bot could not find {book_name}.json")
 
 def get_move(board, ai_color):
     """Generated Middleman for boga"""
@@ -42,8 +42,8 @@ def get_move(board, ai_color):
             if piece.color == ai_color and piece.position.to_notation() == move_str[:2]:
                 for target_pos, move in piece.legal_moves.items():
                     if target_pos.to_notation() == move_str[2:]:
-                        print(f"boga played a random book move: {move_str}")
+                        print(f"boga_bot played a random book move: {move_str}")
                         return move
 
-    print(f"boga is thinking with Stockfish (ELO: 1700, Depth: 6)...")
-    return stockfish.get_stockfish_move(board, elo=1700, depth=6)
+    print(f"boga_bot is thinking with Stockfish (ELO: 1900, Depth: 9)...")
+    return stockfish.get_stockfish_move(board, elo=1900, depth=9)

@@ -16,6 +16,7 @@ from side_scripts import opening_books as openings
 from side_scripts import python_glue as bot
 from engines.stockfish import stockfishpy as stockfish
 from side_scripts import book_generator
+from side_scripts import bot_factory
 
 #<editor-fold desc="FILES AND PREFERENCES">
 def get_asset_path(relative_path):
@@ -159,7 +160,7 @@ RETURN_BTN_RECT = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 30
 #<editor-fold desc="GENERAL SETTINGS">
 
 #<editor-fold desc="GENERAL SETTINGS UI">
-GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color", "Bot Setup"]
+GENERAL_SETTINGS_OPTIONS = ["Auto Save", "Time Control", "Game Mode", "Player Color", "Bot Setup","Forge Bot"]
 GENERAL_SETTINGS_RECTS = []
 
 # ELI5: We have 6 blocks. We want them in 2 columns.
@@ -294,25 +295,25 @@ def handle_media_player_event(event):
 
     # 1. If the radio is off or hidden, we don't care about these clicks.
     if not MUSIC_MANAGER or MUSIC_MANAGER.state == music_manager.MediaPlayerState.OUTSIDE:
-        return False
+        return MenuSignal.FAIL
 
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         if MINI_PREV_BTN.collidepoint(event.pos):
             MUSIC_MANAGER.prev_track()
             add_alert("Skipped to Previous")
-            return True
+            return MenuSignal.PASS
 
         if MINI_NEXT_BTN.collidepoint(event.pos):
             MUSIC_MANAGER.next_track()
             add_alert("Skipped to Next")
-            return True
+            return MenuSignal.PASS
 
         if MINI_SHUFFLE_BTN.collidepoint(event.pos):
             if not MUSIC_MANAGER.is_playlist_empty():
                 MUSIC_MANAGER.shuffle_playlist()
                 print("DJ shuffled the playlist!")
                 add_alert("Playlist Shuffled!")
-            return True
+            return MenuSignal.PASS
 
         if MINI_PLAY_BTN.collidepoint(event.pos):
             if MUSIC_MANAGER.state == music_manager.MediaPlayerState.PLAYING:
@@ -321,15 +322,14 @@ def handle_media_player_event(event):
             else:
                 MUSIC_MANAGER.unpause_music()
                 add_alert("Music Resumed")
-            return True
+            return MenuSignal.PASS
         if ADD_SONGS_BTN.collidepoint(event.pos):
-            print("Add Songs button pressed (No function yet!)")
-            return True
+            return MenuSignal.OPEN_PLAYLIST
         if MINI_PROGRESS_BAR.collidepoint(event.pos):
             MINI_PLAYER_UI_STATE["is_dragging"] = True
             relative_x = event.pos[0] - MINI_PROGRESS_BAR.x
             MINI_PLAYER_UI_STATE["drag_percent"] = max(0.0, min(1.0, relative_x / MINI_PROGRESS_BAR.width))
-            return True
+            return MenuSignal.PASS
 
     elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
         if MINI_PLAYER_UI_STATE["is_dragging"]:
@@ -341,15 +341,15 @@ def handle_media_player_event(event):
 
                 MUSIC_MANAGER.set_timestamp_seconds(target_time)
 
-            return True
+            return MenuSignal.PASS
 
     elif event.type == pygame.MOUSEMOTION:
         if MINI_PLAYER_UI_STATE["is_dragging"]:
             relative_x = event.pos[0] - MINI_PROGRESS_BAR.x
             MINI_PLAYER_UI_STATE["drag_percent"] = max(0.0, min(1.0, relative_x / MINI_PROGRESS_BAR.width))
-            return True
+            return MenuSignal.PASS
 
-    return False # The event had nothing to do with the media player
+    return MenuSignal.PASS # The event had nothing to do with the media player
 # </editor-fold>
 
 
@@ -662,9 +662,7 @@ def load_all_bots():
                             # Give the bot its Care Package of classes!
                             if hasattr(module, "init_bot"):
                                 module.init_bot(Move, MoveType, ChessPieceType, SquarePosition, Board, ChessColor)
-                            else:
-                                print("not init or get move: discarding")
-                            # Save the live module right inside the dictionary
+
                             bot_data["live_module"] = module
                         else:
                             print(f"ERROR: Script {script_path} is missing for {bot_id}!")
@@ -2086,7 +2084,7 @@ def draw_settings_page(screen):
     ret_txt = font_btn.render("RETURN TO MENU", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
-def draw_forge_side_menu(screen):
+def draw_create_openings_side_menu(screen):
     """Paints a clean side menu specifically for the Sandbox Forge."""
     # 1. Menu Background
     pygame.draw.rect(screen, (30, 30, 30), (RIGHT_MENU_X, 0, SIDE_PANEL_WIDTH, SCREEN_HEIGHT))
@@ -2122,6 +2120,83 @@ def draw_forge_side_menu(screen):
     m_txt = font_btn.render("BACK", True, (255, 255, 255))
     screen.blit(m_txt, m_txt.get_rect(center=FORGE_MENU_BTN_RECT.center))
 
+
+def draw_bot_wizard_page(screen, step, data, box_rect, text_rect, btn_script, btn_engine, bg_surface):
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 30, bold=True)
+    font_sub = pygame.font.SysFont("Arial", 20)
+    font_input = pygame.font.SysFont("Arial", 24)
+
+    mouse_pos = pygame.mouse.get_pos()
+
+    # 1. Draw the dimmed background photo
+    screen.blit(bg_surface, (0, 0))
+
+    # 2. Draw the Main Box
+    pygame.draw.rect(screen, (30, 30, 35), box_rect, border_radius=15)
+    pygame.draw.rect(screen, (100, 200, 255), box_rect, 3, border_radius=15)
+
+    title = ""
+    subtitle = ""
+    show_text_box = True
+    current_text = ""
+
+    # 3. State Machine UI Rendering
+    if step == 0:
+        title = "Name Your Bot"
+        subtitle = "e.g., 'Toddler Gary' or 'Grandmaster Alpha'"
+        current_text = data["name"]
+    elif step == 1:
+        title = "Create Bot ID"
+        subtitle = "No spaces allowed. e.g., 'gary_noob'"
+        current_text = data["id"]
+    elif step == 2:
+        title = "Choose Brain Type"
+        subtitle = "How will this bot think?"
+        show_text_box = False
+
+        # Draw Buttons for Brain Choice
+        c1 = (80, 150, 200) if btn_script.collidepoint(mouse_pos) else (60, 100, 150)
+        pygame.draw.rect(screen, c1, btn_script, border_radius=8)
+        t1 = font_sub.render("1. Custom Python Script (Write your own)", True, (255, 255, 255))
+        screen.blit(t1, t1.get_rect(center=btn_script.center))
+
+        c2 = (150, 80, 80) if btn_engine.collidepoint(mouse_pos) else (120, 60, 60)
+        pygame.draw.rect(screen, c2, btn_engine, border_radius=8)
+        t2 = font_sub.render("2. Engine Bot (Uses Stockfish)", True, (255, 255, 255))
+        screen.blit(t2, t2.get_rect(center=btn_engine.center))
+
+    elif step == 3:
+        title = "Assign Opening Books"
+        subtitle = "Comma separated (e.g., sicilian, alapin). Or leave blank."
+        current_text = data["books"]
+    elif step == 4:
+        title = "Engine Depth"
+        subtitle = "How many moves ahead? (e.g., 4. Max=9999)"
+        current_text = data["depth"]
+    elif step == 5:
+        title = "Engine ELO Limit"
+        subtitle = "Limit skill level? (e.g., 1200. Max=9999)"
+        current_text = data["elo"]
+
+    # 4. Draw Titles
+    t_surf = font_title.render(title, True, (255, 255, 255))
+    s_surf = font_sub.render(subtitle, True, (180, 180, 180))
+    screen.blit(t_surf, t_surf.get_rect(center=(SCREEN_WIDTH // 2, box_rect.y + 40)))
+    screen.blit(s_surf, s_surf.get_rect(center=(SCREEN_WIDTH // 2, box_rect.y + 80)))
+
+    # 5. Draw Text Box (If applicable for this step)
+    if show_text_box:
+        pygame.draw.rect(screen, (20, 20, 25), text_rect, border_radius=5)
+        pygame.draw.rect(screen, (150, 150, 150), text_rect, 2, border_radius=5)
+
+        cursor = "|" if pygame.time.get_ticks() % 1000 < 500 else ""
+        txt_surf = font_input.render(current_text + cursor, True, (255, 255, 255))
+        screen.blit(txt_surf, (text_rect.x + 10, text_rect.y + 8))
+
+        enter_txt = font_sub.render("Press ENTER to continue, ESC to cancel", True, (100, 100, 100))
+        screen.blit(enter_txt, enter_txt.get_rect(center=(SCREEN_WIDTH // 2, box_rect.bottom - 30)))
+
 def draw_bot_selection_page(screen, ui_rects, bot_ids, is_launching, scroll_y, clip_rect, track_rect, thumb_rect, max_scroll):
     # 1. Background
     screen.fill((30, 30, 35))
@@ -2135,7 +2210,6 @@ def draw_bot_selection_page(screen, ui_rects, bot_ids, is_launching, scroll_y, c
     font_title = pygame.font.SysFont("Arial", 50, bold=True)
     font_sub = pygame.font.SysFont("Arial", 24, bold=True)
     font_btn = pygame.font.SysFont("Arial", 22, bold=True)
-    font_small = pygame.font.SysFont("Arial", 14, bold=True)
 
     title_surf = font_title.render("BOT SETUP", True, (255, 255, 255))
     screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 60)))
@@ -2161,17 +2235,13 @@ def draw_bot_selection_page(screen, ui_rects, bot_ids, is_launching, scroll_y, c
         surf = font_btn.render(color_name, True, text_col)
         screen.blit(surf, surf.get_rect(center=rect.center))
 
-    # --- 2. Bots (THE SCISSORS GO HERE) ---
+    # --- 2. Bots (The Scroller) ---
     b_txt = font_sub.render("Opponent Level:", True, (200, 200, 200))
     screen.blit(b_txt, b_txt.get_rect(center=(SCREEN_WIDTH // 2, 230)))
-
-    # Draw a subtle background for the bot window so it looks like a recessed panel
     pygame.draw.rect(screen, (25, 25, 30), clip_rect, border_radius=5)
 
     screen.set_clip(clip_rect)
     start_y = 280
-
-    # ELI5: Loop through our list of ID cards instead of numbers!
     for i, bot_id in enumerate(bot_ids):
         col = i % 2
         row = i // 2
@@ -2188,24 +2258,17 @@ def draw_bot_selection_page(screen, ui_rects, bot_ids, is_launching, scroll_y, c
         pygame.draw.rect(screen, base_col, rect, border_radius=10)
         pygame.draw.rect(screen, (255, 255, 255) if is_selected else (120, 120, 120), rect, 3, border_radius=10)
 
-        # ELI5: Ask the Librarian for the bot's real name
         bot_name = LOADED_BOTS[bot_id].get("name", "Unknown Bot") if bot_id in LOADED_BOTS else "Unknown"
         surf = font_btn.render(bot_name, True, (255, 255, 255))
         screen.blit(surf, surf.get_rect(center=rect.center))
-
     screen.set_clip(None)
 
-    # --- THE INTERACTABLE SCROLLBAR ---
     if max_scroll > 0:
-        # Draw the Track
         pygame.draw.rect(screen, (40, 40, 45), track_rect, border_radius=6)
-        pygame.draw.rect(screen, (60, 60, 65), track_rect, 1, border_radius=6)
-
-        # Draw the Thumb
         thumb_col = (180, 180, 200) if thumb_rect.collidepoint(mouse_pos) else (120, 120, 140)
         pygame.draw.rect(screen, thumb_col, thumb_rect, border_radius=6)
 
-    # --- NEW: CREATE OPENINGS BUTTON ---
+    # --- CREATE OPENINGS BUTTON (Back to full size) ---
     co_rect = ui_rects["create_openings"]
     co_col = (150, 80, 200) if co_rect.collidepoint(mouse_pos) else (110, 60, 150)
     pygame.draw.rect(screen, co_col, co_rect, border_radius=10)
@@ -2227,9 +2290,7 @@ def draw_bot_selection_page(screen, ui_rects, bot_ids, is_launching, scroll_y, c
     c_col = (80, 200, 80) if conf_rect.collidepoint(mouse_pos) else (60, 150, 60)
     pygame.draw.rect(screen, c_col, conf_rect, border_radius=15)
     pygame.draw.rect(screen, (255, 255, 255), conf_rect, 3, border_radius=15)
-
-    btn_text = "START GAME" if is_launching else "SAVE SETTINGS"
-    conf_txt = font_btn.render(btn_text, True, (255, 255, 255))
+    conf_txt = font_btn.render("START GAME" if is_launching else "SAVE SETTINGS", True, (255, 255, 255))
     screen.blit(conf_txt, conf_txt.get_rect(center=conf_rect.center))
 
     canc_rect = ui_rects["cancel"]
@@ -2238,7 +2299,6 @@ def draw_bot_selection_page(screen, ui_rects, bot_ids, is_launching, scroll_y, c
     pygame.draw.rect(screen, (255, 255, 255), canc_rect, 3, border_radius=15)
     can_txt = font_btn.render("CANCEL", True, (255, 255, 255))
     screen.blit(can_txt, can_txt.get_rect(center=canc_rect.center))
-
 
 def draw_general_settings_page(screen):
     # 1. Background
@@ -2262,9 +2322,7 @@ def draw_general_settings_page(screen):
     # 3. Dynamic Loop
     for i, rect in enumerate(GENERAL_SETTINGS_RECTS):
         btn_name = GENERAL_SETTINGS_OPTIONS[i]
-
-        # THE FIX: Reset the color to a default grey every loop so it doesn't leak!
-        color = (150, 150, 150)
+        color = (150, 150, 150)  # Default reset
 
         if btn_name == "Auto Save":
             if PREFERENCES["auto_save"]:
@@ -2290,7 +2348,6 @@ def draw_general_settings_page(screen):
                 color = (180, 120, 100) if rect.collidepoint(mouse_pos) else (150, 100, 80)
                 txt_str = f"Play as: {PREFERENCES['player_color']}"
 
-        # THE FIX: Added the specific logic for the new Bot Setup button!
         elif btn_name == "Bot Setup":
             if PREFERENCES["game_mode"] == "Singleplayer":
                 color = (102, 226, 219) if rect.collidepoint(mouse_pos) else (44, 200, 190)
@@ -2298,6 +2355,11 @@ def draw_general_settings_page(screen):
             else:
                 color = (60, 60, 60)  # Disabled
                 txt_str = "Bot Setup (N/A)"
+
+        # --- NEW: FORGE BOT ---
+        elif btn_name == "Forge Bot":
+            color = (100, 180, 255) if rect.collidepoint(mouse_pos) else (80, 140, 200)
+            txt_str = "Forge New Bot"
 
         pygame.draw.rect(screen, color, rect, border_radius=15)
         pygame.draw.rect(screen, (255, 255, 255), rect, 3, border_radius=15)
@@ -2359,6 +2421,65 @@ def draw_video_settings_page(screen):
     ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
 
+def draw_playlist_page(screen, ui_rects):
+    # 1. Paint the cool checkered background
+    screen.fill((30, 30, 35))
+    for row in range(8):
+        for col in range(10):
+            if (row + col) % 2 == 0:
+                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
+
+    mouse_pos = pygame.mouse.get_pos()
+    pygame.font.init()
+    font_title = pygame.font.SysFont("Arial", 60, bold=True)
+    font_btn = pygame.font.SysFont("Arial", 20, bold=True)
+    font_small = pygame.font.SysFont("Arial", 14, bold=True)
+
+    # 2. Draw the big title
+    title_surf = font_title.render("THE DJ BOOTH", True, (255, 255, 255))
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+
+    # 3. Draw the big red CLEAR button
+    clear_rect = ui_rects["clear"]
+    c_col = (180, 80, 80) if clear_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, c_col, clear_rect, border_radius=10)
+    pygame.draw.rect(screen, (255, 255, 255), clear_rect, 2, border_radius=10)
+    c_txt = font_btn.render("CLEAR PLAYLIST", True, (255, 255, 255))
+    screen.blit(c_txt, c_txt.get_rect(center=clear_rect.center))
+
+    # 4. Draw all the Music Packs dynamically
+    for item in ui_rects["packs"]:
+        main_rect = item["main"]
+        add_rect = item["add"]
+        view_rect = item["view"]
+
+        # The main card background
+        pygame.draw.rect(screen, (50, 50, 60), main_rect, border_radius=10)
+        pygame.draw.rect(screen, (100, 100, 120), main_rect, 2, border_radius=10)
+
+        # The pack name
+        name_txt = font_btn.render(item["pack"].replace("_", " ").title(), True, (220, 220, 220))
+        screen.blit(name_txt, (main_rect.x + 20, main_rect.y + 13))
+
+        # The green "Add All" button
+        add_col = (80, 200, 80) if add_rect.collidepoint(mouse_pos) else (60, 150, 60)
+        pygame.draw.rect(screen, add_col, add_rect, border_radius=5)
+        add_txt = font_small.render("+ ADD ALL", True, (255, 255, 255))
+        screen.blit(add_txt, add_txt.get_rect(center=add_rect.center))
+
+        # The blue "View Songs" button
+        view_col = (80, 150, 200) if view_rect.collidepoint(mouse_pos) else (60, 100, 150)
+        pygame.draw.rect(screen, view_col, view_rect, border_radius=5)
+        v_txt = font_small.render("VIEW SONGS", True, (255, 255, 255))
+        screen.blit(v_txt, v_txt.get_rect(center=view_rect.center))
+
+    # 5. Draw the Return button at the bottom
+    ret_rect = ui_rects["return"]
+    ret_color = (180, 80, 80) if ret_rect.collidepoint(mouse_pos) else (150, 60, 60)
+    pygame.draw.rect(screen, ret_color, ret_rect, border_radius=15)
+    pygame.draw.rect(screen, (255, 255, 255), ret_rect, 3, border_radius=15)
+    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
+    screen.blit(ret_txt, ret_txt.get_rect(center=ret_rect.center))
 
 def draw_audio_settings_page(screen, ui_rects):
     screen.fill((30, 30, 35))
@@ -2479,7 +2600,7 @@ def update_window_size(force_fullscreen=None, in_game=False):
     REPLAY_MENU_BTN.y = SCREEN_HEIGHT - 100
 
 
-def draw_view_pack_page(screen, pack_name, tracks, scroll_y, track_rects):
+def draw_view_pack_page(screen, pack_name, tracks, scroll_y, track_rects, track_rect, thumb_rect, max_scroll):
     screen.fill((30, 30, 35))
     for row in range(8):
         for col in range(10):
@@ -2531,13 +2652,22 @@ def draw_view_pack_page(screen, pack_name, tracks, scroll_y, track_rects):
 
     screen.set_clip(None)
 
+    # --- THE INTERACTABLE SCROLLBAR ---
+    if max_scroll > 0:
+        # Draw the Track
+        pygame.draw.rect(screen, (40, 40, 45), track_rect, border_radius=6)
+        pygame.draw.rect(screen, (60, 60, 65), track_rect, 1, border_radius=6)
+
+        # Draw the Thumb
+        thumb_col = (180, 180, 200) if thumb_rect.collidepoint(mouse_pos) else (120, 120, 140)
+        pygame.draw.rect(screen, thumb_col, thumb_rect, border_radius=6)
+
     # Return Button
     ret_color = (180, 80, 80) if RETURN_BTN_RECT.collidepoint(mouse_pos) else (150, 60, 60)
     pygame.draw.rect(screen, ret_color, RETURN_BTN_RECT, border_radius=15)
     pygame.draw.rect(screen, (255, 255, 255), RETURN_BTN_RECT, 3, border_radius=15)
     ret_txt = font_btn.render("RETURN TO PACKS", True, (255, 255, 255))
     screen.blit(ret_txt, ret_txt.get_rect(center=RETURN_BTN_RECT.center))
-
 
 def draw_saved_games_page(screen, games, scroll_y, return_rect, import_rect, clip_rect, track_rect, thumb_rect,
                           max_scroll):
@@ -3619,6 +3749,9 @@ class MenuSignal(Enum):
     QUIT = 2
     START_GAME = 3
     MAIN_MENU = 5
+    OPEN_PLAYLIST = 6
+    PASS = True
+    FAIL = False
 #</editor-fold>
 
 def quit_game():
@@ -3679,25 +3812,58 @@ def run_view_pack_screen(pack_name):
 
     scroll_y = 0
     scroll_speed = 30
-    max_scroll = max(0, (len(tracks) * 70) - (SCREEN_HEIGHT - 220) + 20)
     clip_rect = pygame.Rect(0, 120, SCREEN_WIDTH, SCREEN_HEIGHT - 220)
+
+    # Elevator controls calculation
+    card_height = 70
+    total_content_height = len(tracks) * card_height
+    max_scroll = max(0, total_content_height - clip_rect.height + 20)
 
     track_rects = []  # The painter will fill this for us
 
+    # --- SCROLLBAR STATE ---
+    scrollbar_dragging = False
+    drag_offset_y = 0
+
     while True:
+        # Calculate scrollbar positions every frame
+        track_rect = pygame.Rect(SCREEN_WIDTH - 30, clip_rect.y + 5, 12, clip_rect.height - 10)
+
+        if max_scroll > 0:
+            thumb_height = max(40, (clip_rect.height / total_content_height) * track_rect.height)
+            thumb_y = track_rect.y + (scroll_y / max_scroll) * (track_rect.height - thumb_height)
+            thumb_rect = pygame.Rect(track_rect.x, thumb_y, track_rect.width, thumb_height)
+        else:
+            thumb_rect = None
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
 
+            # --- THE SCROLL WHEEL ---
             if event.type == pygame.MOUSEWHEEL:
                 scroll_y -= event.y * scroll_speed
                 scroll_y = max(0, min(scroll_y, max_scroll))
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if RETURN_BTN_RECT.collidepoint(event.pos):
+
+                # 1. INTERACTABLE SCROLLBAR: DRAG START
+                if thumb_rect and thumb_rect.collidepoint(event.pos):
+                    scrollbar_dragging = True
+                    drag_offset_y = event.pos[1] - thumb_rect.y
+                elif max_scroll > 0 and track_rect.collidepoint(event.pos):
+                    # Jump scroll!
+                    if event.pos[1] > thumb_rect.bottom:
+                        scroll_y = min(max_scroll, scroll_y + clip_rect.height)
+                    elif event.pos[1] < thumb_rect.top:
+                        scroll_y = max(0, scroll_y - clip_rect.height)
+
+                # 2. Return Button
+                elif RETURN_BTN_RECT.collidepoint(event.pos):
                     return MenuSignal.BACK
 
-                if clip_rect.collidepoint(event.pos):
+                # 3. Track Action Buttons
+                elif clip_rect.collidepoint(event.pos):
                     for item in track_rects:
                         if item["next"].collidepoint(event.pos):
                             MUSIC_MANAGER.add_track_next(item["track"])
@@ -3706,10 +3872,82 @@ def run_view_pack_screen(pack_name):
                             MUSIC_MANAGER.add_track_last(item["track"])
                             print(f"Added {item['track'].name} to end of playlist.")
 
-        draw_view_pack_page(SCREEN, pack_name, tracks, scroll_y, track_rects)
+            # --- INTERACTABLE SCROLLBAR: DRAG RELEASE ---
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                scrollbar_dragging = False
+
+            # --- INTERACTABLE SCROLLBAR: DRAG MOTION ---
+            if event.type == pygame.MOUSEMOTION:
+                if scrollbar_dragging and max_scroll > 0:
+                    new_thumb_y = event.pos[1] - drag_offset_y
+                    new_thumb_y = max(track_rect.y, min(new_thumb_y, track_rect.bottom - thumb_height))
+                    scroll_percent = (new_thumb_y - track_rect.y) / (track_rect.height - thumb_height)
+                    scroll_y = scroll_percent * max_scroll
+
+        # Pass the new scrollbar data to the painter!
+        draw_view_pack_page(SCREEN, pack_name, tracks, scroll_y, track_rects, track_rect, thumb_rect, max_scroll)
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
+def run_playlist_screen():
+    global SCREEN, FPS
+    pygame_clock = pygame.time.Clock()
+
+    # Create the blueprint (hitboxes) for the room
+    ui_rects = {
+        "clear": pygame.Rect((SCREEN_WIDTH // 2) - 180, 150, 360, 45),
+        "packs": [],
+        "return": pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
+    }
+
+    # Mathematically stack the packs right in the middle
+    pack_start_y = 220
+    for i, pack_name in enumerate(music_manager.MUSIC_PACK_NAMES):
+        y = pack_start_y + (i * 60)
+        x = (SCREEN_WIDTH // 2) - 180
+
+        main_rect = pygame.Rect(x, y, 360, 50)
+        add_rect = pygame.Rect(main_rect.right - 190, y + 8, 85, 34)
+        view_rect = pygame.Rect(main_rect.right - 95, y + 8, 85, 34)
+
+        ui_rects["packs"].append({
+            "pack": pack_name,
+            "main": main_rect,
+            "add": add_rect,
+            "view": view_rect
+        })
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return MenuSignal.QUIT
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Did we click Return?
+                if ui_rects["return"].collidepoint(event.pos):
+                    return MenuSignal.BACK
+
+                # Did we click Clear?
+                if ui_rects["clear"].collidepoint(event.pos):
+                    MUSIC_MANAGER.clear_playlist()
+                    print("Playlist Cleared.")
+
+                # Did we click inside a Music Pack?
+                for item in ui_rects["packs"]:
+                    if item["add"].collidepoint(event.pos):
+                        MUSIC_MANAGER.add_pack(item["pack"])
+                        print(f"Added all tracks from {item['pack']}.")
+
+                    elif item["view"].collidepoint(event.pos):
+                        # Dive deeper into the specific pack!
+                        result = run_view_pack_screen(item["pack"])
+                        if result == MenuSignal.QUIT:
+                            return MenuSignal.QUIT
+
+        # Paint the screen
+        draw_playlist_page(SCREEN, ui_rects)
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
 
 def run_audio_settings_screen():
     global SCREEN, FPS
@@ -3859,7 +4097,7 @@ def run_video_settings_screen():
         pygame_clock.tick(FPS)
 
 
-def run_forge_screen():
+def run_create_openings_screen():
     global SCREEN, BOARD, IMAGE_CACHE, FPS, CURRENT_MUSIC, FORGE_SAVE_MODE
     pygame_clock = pygame.time.Clock()
 
@@ -3889,8 +4127,11 @@ def run_forge_screen():
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
 
-            if handle_media_player_event(event):
+            temp_handle = handle_media_player_event(event)
+            if temp_handle == MenuSignal.PASS:
                 continue
+            elif temp_handle == MenuSignal.OPEN_PLAYLIST:
+                print("not implomented yet for openings")
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
                 BOARD.undo_move()
@@ -4026,7 +4267,7 @@ def run_forge_screen():
 
         SCREEN.fill((0, 0, 0))
 
-        draw_forge_side_menu(SCREEN)
+        draw_create_openings_side_menu(SCREEN)
         draw_live_diary(SCREEN, BOARD.move_log)
         draw_board(SCREEN, show_notation=False)
         draw_mini_player(SCREEN)
@@ -4057,6 +4298,97 @@ def run_forge_screen():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
+
+def run_bot_wizard_screen():
+    global SCREEN, FPS
+    pygame_clock = pygame.time.Clock()
+
+    # --- WIZARD STATES ---
+    step = 0
+    data = {
+        "name": "", "id": "", "brain": "", "books": "", "depth": "4", "elo": "9999"
+    }
+
+    # Hitboxes
+    box_rect = pygame.Rect((SCREEN_WIDTH // 2) - 250, (SCREEN_HEIGHT // 2) - 150, 500, 300)
+    text_rect = pygame.Rect((SCREEN_WIDTH // 2) - 200, (SCREEN_HEIGHT // 2) + 20, 400, 40)
+    btn_script = pygame.Rect((SCREEN_WIDTH // 2) - 200, (SCREEN_HEIGHT // 2), 400, 45)
+    btn_engine = pygame.Rect((SCREEN_WIDTH // 2) - 200, (SCREEN_HEIGHT // 2) + 60, 400, 45)
+
+    # Take a photo of the current screen to use as a frozen background
+    bg_surface = SCREEN.copy()
+    dim_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+    dim_surface.set_alpha(200)
+    dim_surface.fill((0, 0, 0))
+    bg_surface.blit(dim_surface, (0, 0))
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return False  # Cancel the wizard
+
+                # --- TEXT INPUT HANDLING ---
+                if step in [0, 1, 3, 4, 5]:
+                    key_map = {0: "name", 1: "id", 3: "books", 4: "depth", 5: "elo"}
+                    current_key = key_map[step]
+
+                    if event.key == pygame.K_RETURN:
+                        if step == 0 and data["name"].strip():
+                            step = 1
+                        elif step == 1 and data["id"].strip():
+                            step = 2
+                        elif step == 3:
+                            step = 4 if data["brain"] == "2" else 6
+                        elif step == 4:
+                            step = 5
+                        elif step == 5:
+                            step = 6
+
+                    elif event.key == pygame.K_BACKSPACE:
+                        data[current_key] = data[current_key][:-1]
+                    elif event.unicode.isprintable():
+                        if len(data[current_key]) < 30:
+                            data[current_key] += event.unicode
+                            if step == 1:  # Force bot ID to be snake_case
+                                data["id"] = data["id"].replace(" ", "_").lower()
+
+            # --- MOUSE CLICK HANDLING (For Brain Choice) ---
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if step == 2:
+                    if btn_script.collidepoint(event.pos):
+                        data["brain"] = "1"
+                        step = 3
+                    elif btn_engine.collidepoint(event.pos):
+                        data["brain"] = "2"
+                        step = 3
+
+        # --- EXECUTE FORGE ---
+        if step == 6:
+            book_list = [b.strip() for b in data["books"].split(',')] if data["books"].strip() else []
+            depth_val = int(data["depth"]) if data["depth"].isdigit() else 4
+            elo_val = int(data["elo"]) if data["elo"].isdigit() else 9999
+
+            success = (bot_factory.
+            forge_bot(
+                name=data["name"].strip(),
+                bot_id=data["id"].strip(),
+                brain_choice=data["brain"],
+                book_list=book_list,
+                depth=depth_val,
+                elo=elo_val
+            ))
+            return success
+
+        # --- CALL THE PAINTER ---
+        draw_bot_wizard_page(SCREEN, step, data, box_rect, text_rect, btn_script, btn_engine, bg_surface)
+
+        pygame.display.flip()
+        pygame_clock.tick(FPS)
+
 def run_bot_selection_screen(is_launching):
     global SCREEN
     pygame_clock = pygame.time.Clock()
@@ -4066,32 +4398,28 @@ def run_bot_selection_screen(is_launching):
             "White": pygame.Rect((SCREEN_WIDTH // 2) - 160, 160, 150, 50),
             "Black": pygame.Rect((SCREEN_WIDTH // 2) + 10, 160, 150, 50)
         },
-        "create_openings": pygame.Rect((SCREEN_WIDTH // 2) - 200, 470, 400, 45),
+        # Re-centered the openings button since forge left the building
+        "create_openings": pygame.Rect((SCREEN_WIDTH // 2) - 200, 475, 400, 45),
         "quick_start": pygame.Rect((SCREEN_WIDTH // 2) - 200, 525, 30, 30),
         "confirm": pygame.Rect((SCREEN_WIDTH // 2) + 20, 565, 200, 60),
         "cancel": pygame.Rect((SCREEN_WIDTH // 2) - 220, 565, 200, 60)
     }
 
-    # ELI5: Get the list of every bot ID we found in the folder
     bot_ids = list(LOADED_BOTS.keys())
 
     scroll_y = 0
     scroll_speed = 30
     start_y = 290
+    clip_rect = pygame.Rect((SCREEN_WIDTH // 2) - 280, 270, 560, 195)
 
-    clip_rect = pygame.Rect((SCREEN_WIDTH // 2) - 280, 270, 560, 200)
-
-    # ELI5: Calculate how many rows we need based on the number of bots
     total_rows = (len(bot_ids) + 1) // 2
     total_content_height = total_rows * 60
     max_scroll = max(0, total_content_height - clip_rect.height + 20)
 
-    # --- SCROLLBAR STATE ---
     scrollbar_dragging = False
     drag_offset_y = 0
 
     while True:
-        # Calculate scrollbar positions every frame so the mouse can interact with them
         track_rect = pygame.Rect(clip_rect.right + 10, clip_rect.y + 5, 12, clip_rect.height - 10)
 
         if max_scroll > 0:
@@ -4105,61 +4433,41 @@ def run_bot_selection_screen(is_launching):
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
 
-            # Catch the mouse wheel!
             if event.type == pygame.MOUSEWHEEL:
                 scroll_y -= event.y * scroll_speed
                 scroll_y = max(0, min(scroll_y, max_scroll))
 
-            # --- INTERACTABLE SCROLLBAR: DRAG START ---
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if thumb_rect and thumb_rect.collidepoint(event.pos):
                     scrollbar_dragging = True
                     drag_offset_y = event.pos[1] - thumb_rect.y
                 elif max_scroll > 0 and track_rect.collidepoint(event.pos):
-                    # They clicked the track but missed the thumb -> Jump scroll!
                     if event.pos[1] > thumb_rect.bottom:
                         scroll_y = min(max_scroll, scroll_y + clip_rect.height)
                     elif event.pos[1] < thumb_rect.top:
                         scroll_y = max(0, scroll_y - clip_rect.height)
 
-                # 1. Cancel
                 elif ui_rects["cancel"].collidepoint(event.pos):
                     return MenuSignal.BACK
 
-                # 2. Confirm
                 elif ui_rects["confirm"].collidepoint(event.pos):
                     save_preferences()
                     return MenuSignal.START_GAME if is_launching else MenuSignal.BACK
 
-                # 3. Quick Start Toggle
                 elif ui_rects["quick_start"].collidepoint(event.pos):
                     PREFERENCES["quick_start_bot"] = not PREFERENCES["quick_start_bot"]
 
-
                 elif ui_rects["create_openings"].collidepoint(event.pos):
-
-                    # Launch it directly from here!
-
-                    result = run_forge_screen()
-
-                    # If they hit the RED button inside the Forge, pass the nuke up!
-
+                    result = run_create_openings_screen()
                     if result == MenuSignal.MAIN_MENU:
-
                         return MenuSignal.MAIN_MENU
-
                     elif result == MenuSignal.QUIT:
-
                         return MenuSignal.QUIT
 
-                # 4. Color Selection
                 for color_name, rect in ui_rects["colors"].items():
                     if rect.collidepoint(event.pos):
                         PREFERENCES["player_color"] = color_name
 
-
-
-                # 5. Bot Selection (Only click if inside the window pane!)
                 if clip_rect.collidepoint(event.pos):
                     for i, bot_id in enumerate(bot_ids):
                         col = i % 2
@@ -4169,24 +4477,18 @@ def run_bot_selection_screen(is_launching):
                         bot_rect = pygame.Rect(x, y, 250, 45)
 
                         if bot_rect.collidepoint(event.pos):
-                            # Save the ID to the clipboard!
                             PREFERENCES["bot_id"] = bot_id
 
-            # --- INTERACTABLE SCROLLBAR: DRAG RELEASE ---
             if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 scrollbar_dragging = False
 
-            # --- INTERACTABLE SCROLLBAR: DRAG MOTION ---
             if event.type == pygame.MOUSEMOTION:
                 if scrollbar_dragging and max_scroll > 0:
                     new_thumb_y = event.pos[1] - drag_offset_y
-                    # Keep it strictly inside the track
                     new_thumb_y = max(track_rect.y, min(new_thumb_y, track_rect.bottom - thumb_height))
-                    # Reverse math: Turn screen position back into scroll_y
                     scroll_percent = (new_thumb_y - track_rect.y) / (track_rect.height - thumb_height)
                     scroll_y = scroll_percent * max_scroll
 
-        # Pass bot_ids to the painter!
         draw_bot_selection_page(SCREEN, ui_rects, bot_ids, is_launching, scroll_y, clip_rect, track_rect, thumb_rect, max_scroll)
         pygame.display.flip()
         pygame_clock.tick(FPS)
@@ -4233,6 +4535,9 @@ def run_home_screen():
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
+
+
+
 def run_general_settings_screen():
     global SCREEN, AUTO_SAVE, STARTING_TIME
     pygame_clock = pygame.time.Clock()
@@ -4264,25 +4569,30 @@ def run_general_settings_screen():
                             curr = PREFERENCES["game_mode"]
                             idx = modes.index(curr) if curr in modes else 0
                             PREFERENCES["game_mode"] = modes[(idx + 1) % len(modes)]
-                            
+
                         elif btn_name == "Player Color" and PREFERENCES["game_mode"] == "Singleplayer":
-                            # Flip the color in the global clipboard
                             if PREFERENCES["player_color"] == "White":
                                 PREFERENCES["player_color"] = "Black"
                             else:
                                 PREFERENCES["player_color"] = "White"
 
                         elif btn_name == "Bot Setup" and PREFERENCES["game_mode"] == "Singleplayer":
-                            # OPEN THE NEW ROOM!
                             result = run_bot_selection_screen(is_launching=False)
                             if result == MenuSignal.QUIT:
                                 return MenuSignal.QUIT
+
+                        # --- NEW: FORGE BOT LOGIC ---
+                        elif btn_name == "Forge Bot":
+                            success = run_bot_wizard_screen()
+                            if success:
+                                # Reload the library quietly in the background!
+                                load_all_bots()
+
                         save_preferences()
 
         draw_general_settings_page(SCREEN)
         pygame.display.flip()
         pygame_clock.tick(FPS)
-
 
 def run_server_browser_screen():
     global SCREEN, FPS
@@ -4383,8 +4693,11 @@ def run_replay_screen(pgn_string: str):
             if event.type == pygame.QUIT:
                 return MenuSignal.QUIT
 
-            if handle_media_player_event(event):
+            temp_handle = handle_media_player_event(event)
+            if temp_handle == MenuSignal.PASS:
                 continue
+            elif temp_handle == MenuSignal.OPEN_PLAYLIST:
+                print("not implomented to replay yet")
 
             # --- KEYBOARD SHORTCUTS ---
             if event.type == pygame.KEYDOWN:
@@ -5122,7 +5435,30 @@ def main():
 
 
             #finished the song and moving on to the next.
-            if handle_media_player_event(event):
+            temp_handle = handle_media_player_event(event)
+            if temp_handle == MenuSignal.PASS:
+                continue
+
+            elif temp_handle == MenuSignal.OPEN_PLAYLIST:
+                was_paused = is_paused
+                # THE BOUNCER: Only pause time if we are offline!
+                if PREFERENCES["game_mode"] != "Online":
+                    is_paused = True
+                    CLOCKS[BOARD.active_color].stop()
+
+                # Send the chef to the Audio Room
+                result = run_playlist_screen()
+
+                # Check if they hit the red X while in the menu
+                if result == MenuSignal.QUIT:
+                    running = False
+                    continue
+
+                # When the chef gets back, unpause (if it wasn't already manually paused before)
+                if PREFERENCES["game_mode"] != "Online":
+                    is_paused = was_paused
+                    if not is_paused:
+                        CLOCKS[BOARD.active_color].start()
                 continue
 
             # ==========================================

@@ -26,5 +26,41 @@
     ],
     "r1bqk1nr/pppp1ppp/2n5/b7/2B1P3/2p2N2/P4PPP/RNBQ1RK1 w": [
         "d1b3"
+    ],
+    "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w": [
+        "a2a3"
+    ],
+    "r1bqkbnr/pp1ppppp/2n5/2p5/4P3/P7/1PPP1PPP/RNBQKBNR w": [
+        "b2b4"
+    ],
+    "r1bqkbnr/pp1ppppp/2n5/8/1p2P3/P7/2PP1PPP/RNBQKBNR w": [
+        "a3b4"
+    ],
+    "r1bqkbnr/pp1ppppp/8/8/1n2P3/8/2PP1PPP/RNBQKBNR w": [
+        "c2c3"
+    ],
+    "r1bqkbnr/pp1ppppp/2n5/8/4P3/2P5/3P1PPP/RNBQKBNR w": [
+        "d2d4"
+    ],
+    "r1bqkbnr/pp2pppp/2n5/3p4/3PP3/2P5/5PPP/RNBQKBNR w": [
+        "e4d5"
+    ],
+    "r1b1kbnr/pp2pppp/2n5/3q4/3P4/2P5/5PPP/RNBQKBNR w": [
+        "b1a3"
+    ],
+    "r1b1kb1r/pp2pppp/2n2n2/3q4/3P4/N1P5/5PPP/R1BQKBNR w": [
+        "a3b5"
+    ],
+    "r1bqkb1r/pp2pppp/2n2n2/1N6/3P4/2P5/5PPP/R1BQKBNR w": [
+        "d4d5"
+    ],
+    "r1bqkb1r/pp2pppp/2n5/1N1n4/8/2P5/5PPP/R1BQKBNR w": [
+        "d1d5"
+    ],
+    "r1b1kb1r/pp2pppp/2n5/1N1q4/8/2P5/5PPP/R1B1KBNR w": [
+        "b5c7"
+    ],
+    "r1b2b1r/ppNkpppp/2n5/3q4/8/2P5/5PPP/R1B1KBNR w": [
+        "c7d5"
     ]
 }
