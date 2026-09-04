@@ -5436,10 +5436,7 @@ def main():
 
             #finished the song and moving on to the next.
             temp_handle = handle_media_player_event(event)
-            if temp_handle == MenuSignal.PASS:
-                continue
-
-            elif temp_handle == MenuSignal.OPEN_PLAYLIST:
+            if temp_handle == MenuSignal.OPEN_PLAYLIST:
                 was_paused = is_paused
                 # THE BOUNCER: Only pause time if we are offline!
                 if PREFERENCES["game_mode"] != "Online":
@@ -5468,7 +5465,6 @@ def main():
 
                 # --- LEFT CLICK (Normal Play) ---
                 if event.button == 1:
-
                     # 1. UI BUTTON INTERCEPTS (Menu area)
                     if UNDO_BTN_RECT.collidepoint(event.pos):
                         undo_move()
