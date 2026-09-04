@@ -9,7 +9,7 @@ import random
 import time
 import socket
 import importlib.util
-from network import Network
+from network.network import Network
 from enum import Enum
 from technical_audio import music_manager
 from side_scripts import opening_books as openings
@@ -4128,9 +4128,8 @@ def run_create_openings_screen():
                 return MenuSignal.QUIT
 
             temp_handle = handle_media_player_event(event)
-            if temp_handle == MenuSignal.PASS:
-                continue
-            elif temp_handle == MenuSignal.OPEN_PLAYLIST:
+
+            if temp_handle == MenuSignal.OPEN_PLAYLIST:
                 print("not implomented yet for openings")
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
@@ -4694,9 +4693,8 @@ def run_replay_screen(pgn_string: str):
                 return MenuSignal.QUIT
 
             temp_handle = handle_media_player_event(event)
-            if temp_handle == MenuSignal.PASS:
-                continue
-            elif temp_handle == MenuSignal.OPEN_PLAYLIST:
+
+            if temp_handle == MenuSignal.OPEN_PLAYLIST:
                 print("not implomented to replay yet")
 
             # --- KEYBOARD SHORTCUTS ---

@@ -1,10 +1,10 @@
 {
-    "game_counter": 15,
+    "game_counter": 16,
     "auto_save": true,
     "starting_time": 1800,
-    "game_mode": "Multiplayer",
+    "game_mode": "Singleplayer",
     "player_color": "Black",
-    "bot_id": "boga_bot",
+    "bot_id": "bog_ai",
     "bot_thinking_time": 0.5,
     "fps": 60,
     "animation_time": 0.1,

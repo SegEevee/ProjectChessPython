@@ -1,0 +1,6 @@
+{
+    "name": "bogAI",
+    "type": "script",
+    "script_file": "bog_ai.py",
+    "function_name": "get_move"
+}
