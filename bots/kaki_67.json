@@ -1,0 +1,6 @@
+{
+    "name": "kaki",
+    "type": "script",
+    "script_file": "kaki_67.py",
+    "function_name": "get_move"
+}

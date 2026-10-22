@@ -7,9 +7,7 @@ import json
 import re
 import random
 import time
-import socket
 import importlib.util
-from network.network import Network
 from enum import Enum
 from technical_audio import music_manager
 from side_scripts import opening_books as openings
@@ -1962,86 +1960,6 @@ def draw_home_page(screen):
         pygame.draw.line(screen, set_color, (in_x, in_y), (out_x, out_y), 4) # Teeth
 
 
-def draw_server_browser_page(screen, servers_found: dict, return_rect):
-    # 1. Background
-    screen.fill((30, 30, 35))
-    for row in range(8):
-        for col in range(10):
-            if (row + col) % 2 == 0:
-                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
-
-    pygame.font.init()
-    font_title = pygame.font.SysFont("Arial", 60, bold=True)
-    font_btn = pygame.font.SysFont("Arial", 24, bold=True)
-
-    # 2. Title
-    title = font_title.render("LOCAL SERVERS", True, (255, 255, 255))
-    screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 80)))
-
-    # 3. Dynamic Server Buttons
-    start_y = 180
-    mouse_pos = pygame.mouse.get_pos()
-
-    for i, (ip, data) in enumerate(servers_found.items()):
-        btn_rect = pygame.Rect((SCREEN_WIDTH // 2) - 250, start_y + (i * 90), 500, 70)
-
-        # ELI5: We update the dictionary with the hitbox right as we paint it!
-        data["rect"] = btn_rect
-
-        is_full = data["seats"] == "0"
-        if is_full:
-            bg_color = (150, 60, 60)
-        else:
-            bg_color = (80, 150, 200) if btn_rect.collidepoint(mouse_pos) else (60, 120, 160)
-
-        pygame.draw.rect(screen, bg_color, btn_rect, border_radius=10)
-        pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2, border_radius=10)
-
-        srv_txt = font_btn.render(f"{data['name']} ({ip})", True, (255, 255, 255))
-        seat_txt = font_btn.render(f"Seats: {data['seats']}/2", True,
-                                   (200, 255, 200) if not is_full else (255, 150, 150))
-
-        screen.blit(srv_txt, (btn_rect.x + 20, btn_rect.y + 20))
-        screen.blit(seat_txt, (btn_rect.right - 140, btn_rect.y + 20))
-
-    # 4. Empty State Text
-    if not servers_found:
-        search_txt = font_btn.render("Listening for Megaphones...", True, (150, 150, 150))
-        screen.blit(search_txt, search_txt.get_rect(center=(SCREEN_WIDTH // 2, 250)))
-
-    # 5. Return Button
-    ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
-    pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
-    pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
-    ret_txt = font_btn.render("RETURN", True, (255, 255, 255))
-    screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
-
-def draw_waiting_room_page(screen, my_color, return_rect):
-    screen.fill((30, 30, 35))
-    for row in range(8):
-        for col in range(10):
-            if (row + col) % 2 == 0:
-                pygame.draw.rect(screen, (35, 35, 40), (col * 100, row * 100, 100, 100))
-
-    pygame.font.init()
-    font_title = pygame.font.SysFont("Arial", 40, bold=True)
-    font_sub = pygame.font.SysFont("Arial", 24)
-    font_btn = pygame.font.SysFont("Arial", 30, bold=True)
-
-    txt1 = font_title.render(f"You are playing as {my_color}", True, (255, 255, 255))
-    txt2 = font_sub.render("Waiting for opponent to join the room...", True, (200, 200, 200))
-
-    screen.blit(txt1, txt1.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 40)))
-    screen.blit(txt2, txt2.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 30)))
-
-    # Draw the Return Button
-    mouse_pos = pygame.mouse.get_pos()
-    ret_color = (180, 80, 80) if return_rect.collidepoint(mouse_pos) else (150, 60, 60)
-    pygame.draw.rect(screen, ret_color, return_rect, border_radius=15)
-    pygame.draw.rect(screen, (255, 255, 255), return_rect, 3, border_radius=15)
-    ret_txt = font_btn.render("RETURN TO MENU", True, (255, 255, 255))
-    screen.blit(ret_txt, ret_txt.get_rect(center=return_rect.center))
-
 def draw_settings_page(screen):
     # 1. Same cool background as the Home Page
     screen.fill((30, 30, 35))
@@ -2341,7 +2259,7 @@ def draw_general_settings_page(screen):
             txt_str = f"Mode: {PREFERENCES['game_mode']}"
 
         elif btn_name == "Player Color":
-            if PREFERENCES["game_mode"] == "Multiplayer" or PREFERENCES["game_mode"] == "Online":
+            if PREFERENCES["game_mode"] == "Multiplayer":
                 color = (60, 60, 60)  # Disabled
                 txt_str = "Color: N/A"
             else:
@@ -3362,37 +3280,15 @@ def draw_game_over_screen(screen, winner_color: ChessColor, is_draw=False):
     text_rect = text_surface.get_rect(center=(board_center_x, start_y + 45))
     screen.blit(text_surface, text_rect)
 
-    # 4. Draw the Buttons based on Game Mode
-    is_online = PREFERENCES["game_mode"] == "Online"
+    # 4. Draw the "Again?" Button
+    btn_rect = pygame.Rect(0, 0, 140, 50)
+    btn_rect.center = (board_center_x, start_y + 110)
+    pygame.draw.rect(screen, (100, 200, 100), btn_rect)
+    pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
+    btn_text = font_small.render("Again?", True, (0, 0, 0))
+    screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
 
-    if is_online:
-        # --- REMATCH BUTTON ---
-        rematch_rect = pygame.Rect(0, 0, 130, 50)
-        rematch_rect.center = (board_center_x - 75, start_y + 110)
-        pygame.draw.rect(screen, (100, 200, 100), rematch_rect)
-        pygame.draw.rect(screen, (255, 255, 255), rematch_rect, 2)
-        rm_text = font_small.render("Rematch", True, (0, 0, 0))
-        screen.blit(rm_text, rm_text.get_rect(center=rematch_rect.center))
-
-        # --- MENU BUTTON ---
-        menu_rect = pygame.Rect(0, 0, 130, 50)
-        menu_rect.center = (board_center_x + 75, start_y + 110)
-        pygame.draw.rect(screen, (200, 100, 100), menu_rect)
-        pygame.draw.rect(screen, (255, 255, 255), menu_rect, 2)
-        mn_text = font_small.render("Menu", True, (255, 255, 255))
-        screen.blit(mn_text, mn_text.get_rect(center=menu_rect.center))
-
-        return rematch_rect, menu_rect
-    else:
-        # --- NORMAL AGAIN BUTTON ---
-        btn_rect = pygame.Rect(0, 0, 140, 50)
-        btn_rect.center = (board_center_x, start_y + 110)
-        pygame.draw.rect(screen, (100, 200, 100), btn_rect)
-        pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
-        btn_text = font_small.render("Again?", True, (0, 0, 0))
-        screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
-
-        return btn_rect, None
+    return btn_rect, None
 
 # </editor-fold>
 
@@ -3414,8 +3310,6 @@ CLOCKS[ChessColor.BLACK] = ChessClock(ChessColor.BLACK, STARTING_TIME)
 IMAGE_CACHE = {}
 
 NOTATION_FONT = None  # We will initialize this inside main()
-
-ONLINE_CONNECTION = None
 
 CHESS_MODEL = None
 EVALUATION_CACHE = {}
@@ -3758,47 +3652,6 @@ def quit_game():
     if PREFERENCES: save_preferences()
     pygame.quit()
     sys.exit()
-
-
-def run_waiting_room_screen():
-    global SCREEN, FPS, ONLINE_CONNECTION
-    pygame_clock = pygame.time.Clock()
-
-    # The new Return Door!
-    return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
-
-    # We stay in this loop drawing the screen until the Referee says "START"
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return MenuSignal.QUIT
-
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if return_rect.collidepoint(event.pos):
-                    return MenuSignal.BACK
-
-        # 1. Check the Mailbox!
-        if ONLINE_CONNECTION:
-            tag, payload = ONLINE_CONNECTION.peek_mailbox()
-
-            if tag == "SYNC":
-                ONLINE_CONNECTION.sync_data = json.loads(payload)
-                print("[LOBBY] Downloaded match data from server.")
-
-            elif tag == "START":
-                print("[LOBBY] The Starting Gun fired! Let's play.")
-                return MenuSignal.START_GAME
-
-            elif tag == "DISCONNECT":
-                print("[LOBBY] The Referee vanished. Going back to menu.")
-                return MenuSignal.BACK
-
-        # 2. Draw the Waiting Room
-        my_color = ONLINE_CONNECTION.color if ONLINE_CONNECTION and ONLINE_CONNECTION.color else "Unknown"
-        draw_waiting_room_page(SCREEN, my_color, return_rect)
-
-        pygame.display.flip()
-        pygame_clock.tick(FPS)
 
 
 def run_view_pack_screen(pack_name):
@@ -4520,7 +4373,7 @@ def run_home_screen():
                             # Quick start is ON, let them through immediately!
                             return MenuSignal.START_GAME
                     else:
-                        # Multiplayer or Online, let them right through!
+                        # Multiplayer, let them right through!
                         return MenuSignal.START_GAME
 
                 elif QUIT_BTN_RECT.collidepoint(event.pos):
@@ -4564,7 +4417,7 @@ def run_general_settings_screen():
                             for color in [ChessColor.WHITE, ChessColor.BLACK]:
                                 CLOCKS[color].change_starting_time(PREFERENCES["starting_time"])
                         elif btn_name == "Game Mode":
-                            modes = ["Singleplayer", "Multiplayer", "Online"]
+                            modes = ["Singleplayer", "Multiplayer"]
                             curr = PREFERENCES["game_mode"]
                             idx = modes.index(curr) if curr in modes else 0
                             PREFERENCES["game_mode"] = modes[(idx + 1) % len(modes)]
@@ -4590,64 +4443,6 @@ def run_general_settings_screen():
                         save_preferences()
 
         draw_general_settings_page(SCREEN)
-        pygame.display.flip()
-        pygame_clock.tick(FPS)
-
-def run_server_browser_screen():
-    global SCREEN, FPS
-    pygame_clock = pygame.time.Clock()
-
-    # --- TURN ON THE MICROPHONE (UDP Listener) ---
-    mic = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    mic.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    mic.bind(("", 5556))
-    mic.setblocking(False)
-
-    servers_found = {}
-    return_rect = pygame.Rect((SCREEN_WIDTH // 2) - 150, SCREEN_HEIGHT - 100, 300, 60)
-
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return None
-
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if return_rect.collidepoint(event.pos):
-                    return "BACK"
-
-                # Check the dictionary to see if they clicked a server hitbox
-                for ip, data in servers_found.items():
-                    if data.get("rect") and data["rect"].collidepoint(event.pos):
-                        if data["seats"] != "0":  # Bouncer: Don't let them click full rooms!
-                            return ip
-
-                            # --- LISTEN FOR SHOUTS ---
-        try:
-            for _ in range(10):
-                data, addr = mic.recvfrom(1024)
-                msg = data.decode('utf-8')
-                if msg.startswith("CHESS_SERVER|"):
-                    parts = msg.split("|")
-
-                    # Update the notebook
-                    servers_found[addr[0]] = {
-                        "time": time.time(),
-                        "name": parts[1],
-                        "seats": parts[2],
-                        "rect": servers_found.get(addr[0], {}).get("rect")  # Keep the old hitbox if it exists
-                    }
-        except BlockingIOError:
-            pass
-
-            # --- CLEAN UP DEAD SERVERS ---
-        now = time.time()
-        dead_ips = [ip for ip, data in servers_found.items() if now - data["time"] > 3.0]
-        for dead in dead_ips:
-            del servers_found[dead]
-
-        # Call the Paint Bucket!
-        draw_server_browser_page(SCREEN, servers_found, return_rect)
-
         pygame.display.flip()
         pygame_clock.tick(FPS)
 
@@ -5160,7 +4955,7 @@ def run_settings_screen():
 # <editor-fold desc="MAIN">
 
 def main():
-    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED,ONLINE_CONNECTION,MUSIC_MANAGER
+    global SCREEN, BOARD, IMAGE_CACHE, PLAYERS, NOTATION_FONT, FPS,DT,BOARD_FLIPPED,MUSIC_MANAGER
 
     load_preferences()
     load_all_bots()
@@ -5250,9 +5045,9 @@ def main():
     # ==========================================
     # 3. THE CLEANUP CREW
     # ==========================================
-    def reset_match(keep_connection=False):
+    def reset_match():
         nonlocal picking_piece, is_dragging, promotion_pending, game_over_btn_rect, is_paused, has_auto_saved, ai_thinking_timer, animation_state,ai_color
-        global BOARD_FLIPPED,ONLINE_CONNECTION,CURRENT_MUSIC
+        global BOARD_FLIPPED,CURRENT_MUSIC
         PLAYERS[ChessColor.WHITE].lost = False
         PLAYERS[ChessColor.BLACK].lost = False
         BOARD.is_draw = False
@@ -5280,80 +5075,11 @@ def main():
         CLOCKS[BOARD.active_color].start()
         CLOCKS[OTHER_COLOR[BOARD.active_color]].stop()
 
-        #BOOKMARK
-        if PREFERENCES["game_mode"] == "Online":
-
-            # 1. If we don't have a connection, open the Server Browser!
-            if not keep_connection:
-                chosen_ip = run_server_browser_screen()
-
-                if chosen_ip is None:  # They clicked the red X on the window
-                    quit_game()
-                elif chosen_ip == "BACK":  # They clicked Return
-                    ONLINE_CONNECTION = None
-                    action = run_home_screen()
-                    if action == MenuSignal.QUIT:
-                        quit_game()
-                    elif action == MenuSignal.START_GAME:
-                        reset_match()
-                    return  # Stop resetting, we left!
-                else:
-                    # They clicked a valid server button! Dial the phone!
-                    print(f"Dialing {chosen_ip}...")
-                    try:
-                        ONLINE_CONNECTION = Network(chosen_ip)
-                        PREFERENCES["player_color"] = ONLINE_CONNECTION.color
-                    except Exception as e:
-                        print(f"Failed to dial {chosen_ip}: {e}")
-                        ONLINE_CONNECTION = None
-                        PREFERENCES["game_mode"] = "Multiplayer"
-
-            # 2. Whether we kept the connection or just made a new one, go wait in the Lobby!
-            if ONLINE_CONNECTION:
-                lobby_result = run_waiting_room_screen()
-                if lobby_result == MenuSignal.QUIT:
-                    quit_game()
-                elif lobby_result == MenuSignal.BACK:
-                    ONLINE_CONNECTION.send_message("LEAVE")
-                    ONLINE_CONNECTION = None
-                    action = run_home_screen()
-                    if action == MenuSignal.QUIT:
-                        quit_game()
-                    elif action == MenuSignal.START_GAME:
-                        reset_match()
-                    return
-                else:
-                    # 3. ONLY sync history if it's a fresh connection. Rematches start fresh!
-                    if not keep_connection:
-                        sync = ONLINE_CONNECTION.sync_data
-                        if sync:
-                            print("[LOBBY] Syncing clocks and board state...")
-                            CLOCKS[ChessColor.WHITE].restore_time(sync["time_w"])
-                            CLOCKS[ChessColor.BLACK].restore_time(sync["time_b"])
-
-                            old_sfx = PREFERENCES["sfx_mute"]
-                            PREFERENCES["sfx_mute"] = True
-
-                            for san in sync["history"]:
-                                move = get_move_from_san(BOARD, san)
-                                if move: BOARD.execute_move(move)
-
-                            PREFERENCES["sfx_mute"] = old_sfx
-
-                            if BOARD.active_color == ChessColor.WHITE:
-                                CLOCKS[ChessColor.BLACK].stop()
-                                CLOCKS[ChessColor.WHITE].start()
-                            else:
-                                CLOCKS[ChessColor.WHITE].stop()
-                                CLOCKS[ChessColor.BLACK].start()
-        else:
-            ONLINE_CONNECTION = None
-
         if PREFERENCES["game_mode"] == "Singleplayer":
             ai_color = ChessColor.BLACK if PREFERENCES["player_color"] == "White" else ChessColor.WHITE
         else: ai_color = None
 
-        if PREFERENCES["game_mode"] in ["Singleplayer", "Online"] and PREFERENCES["player_color"] == "Black":
+        if PREFERENCES["game_mode"] == "Singleplayer" and PREFERENCES["player_color"] == "Black":
             BOARD_FLIPPED = True
         else:
             BOARD_FLIPPED = False
@@ -5436,10 +5162,9 @@ def main():
             temp_handle = handle_media_player_event(event)
             if temp_handle == MenuSignal.OPEN_PLAYLIST:
                 was_paused = is_paused
-                # THE BOUNCER: Only pause time if we are offline!
-                if PREFERENCES["game_mode"] != "Online":
-                    is_paused = True
-                    CLOCKS[BOARD.active_color].stop()
+                # Pause the clock while the playlist menu is open
+                is_paused = True
+                CLOCKS[BOARD.active_color].stop()
 
                 # Send the chef to the Audio Room
                 result = run_playlist_screen()
@@ -5450,10 +5175,9 @@ def main():
                     continue
 
                 # When the chef gets back, unpause (if it wasn't already manually paused before)
-                if PREFERENCES["game_mode"] != "Online":
-                    is_paused = was_paused
-                    if not is_paused:
-                        CLOCKS[BOARD.active_color].start()
+                is_paused = was_paused
+                if not is_paused:
+                    CLOCKS[BOARD.active_color].start()
                 continue
 
             # ==========================================
@@ -5490,40 +5214,25 @@ def main():
                     if show_top_buttons:
                         if TOP_FLAG_BTN_RECT.collidepoint(event.pos):
                             PLAYERS[top_color].lost = True
-                            if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("RESIGN")
                             continue
 
                         if TOP_DRAW_BTN_RECT.collidepoint(event.pos):
                             if BOARD.draw_offered_by == bottom_color:
                                 BOARD.is_draw = True
-                                if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("DRAW_ACCEPT")
                             else:
                                 BOARD.draw_offered_by = top_color
-                                if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("DRAW_OFFER", top_color.value)
                             continue
 
                     # --- BOTTOM BUTTONS ---
                     if BOTTOM_FLAG_BTN_RECT.collidepoint(event.pos):
-                        # Online Anti-Cheat
-                        if PREFERENCES[
-                            "game_mode"] == "Online" and ONLINE_CONNECTION and ONLINE_CONNECTION.color != bottom_color.value.capitalize():
-                            continue
                         PLAYERS[bottom_color].lost = True
-                        if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("RESIGN")
                         continue
 
                     if BOTTOM_DRAW_BTN_RECT.collidepoint(event.pos):
-                        # Online Anti-Cheat
-                        if PREFERENCES[
-                            "game_mode"] == "Online" and ONLINE_CONNECTION and ONLINE_CONNECTION.color != bottom_color.value.capitalize():
-                            continue
-
                         if BOARD.draw_offered_by == top_color:
                             BOARD.is_draw = True
-                            if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("DRAW_ACCEPT")
                         else:
                             BOARD.draw_offered_by = bottom_color
-                            if ONLINE_CONNECTION: ONLINE_CONNECTION.send_message("DRAW_OFFER", bottom_color.value)
                         continue
 
                     if PAUSE_BTN_RECT.collidepoint(event.pos):
@@ -5540,10 +5249,8 @@ def main():
                         continue
 
                     if MENU_BTN_RECT.collidepoint(event.pos):
-                        # Stop the clocks and hang up the phone!
+                        # Stop the clocks
                         CLOCKS[BOARD.active_color].stop()
-                        ONLINE_CONNECTION.send_message("LEAVE") if ONLINE_CONNECTION else None
-                        ONLINE_CONNECTION = None
 
                         MUSIC_MANAGER.exit_music()
                         action = run_home_screen()
@@ -5568,27 +5275,9 @@ def main():
                     if game_over_btn_rect is not None:
                         rect1, rect2 = game_over_btn_rect
 
-                        # Rematch / Again Button
+                        # Again Button
                         if rect1 and rect1.collidepoint(event.pos):
-                            if PREFERENCES["game_mode"] == "Online" and ONLINE_CONNECTION:
-                                ONLINE_CONNECTION.send_message("REMATCH")
-                                reset_match(keep_connection=True)
-                            else:
-                                reset_match()
-                            continue
-
-                        # Menu Button (Only exists in Online mode right now)
-                        if rect2 and rect2.collidepoint(event.pos):
-                            if ONLINE_CONNECTION:
-                                ONLINE_CONNECTION.send_message("LEAVE")
-                            ONLINE_CONNECTION = None
-                            CLOCKS[BOARD.active_color].stop()
-
-                            action = run_home_screen()
-                            if action == MenuSignal.QUIT:
-                                running = False
-                            elif action == MenuSignal.START_GAME:
-                                reset_match()
+                            reset_match()
                             continue
 
                         continue  # DO NOT LET THEM CLICK THE BOARD!
@@ -5616,12 +5305,6 @@ def main():
 
                     clicked_piece = BOARD.get_piece_at(clicked)
 
-                    # --- NEW: ONLINE ANTI-CHEAT ---
-                    if PREFERENCES["game_mode"] == "Online" and ONLINE_CONNECTION:
-                        # If the piece you clicked does NOT match the color the Referee gave you...
-                        if clicked_piece is not None and clicked_piece.color.value.upper() != ONLINE_CONNECTION.color.upper():
-                            continue  # Ignore the click completely!
-
                     # 1. Grab a piece to drag
                     if clicked_piece is not None and clicked_piece.color == BOARD.active_color:
                         picking_piece = clicked_piece
@@ -5639,11 +5322,6 @@ def main():
                             else:
                                 BOARD.execute_move(move)
                                 picking_piece = None
-
-                                if ONLINE_CONNECTION is not None:
-                                    san_string = BOARD.move_log[-1].algebraic_notation
-                                    clean_san = san_string.replace("+", "").replace("#", "")
-                                    ONLINE_CONNECTION.send_message("MOVE", clean_san)
 
                 # --- RIGHT CLICK (Start Arrow) ---
                 elif event.button == 3:
@@ -5672,10 +5350,6 @@ def main():
                                 else:
                                     BOARD.execute_move(move)
                                     picking_piece = None
-                                    if ONLINE_CONNECTION is not None:
-                                        san_string = BOARD.move_log[-1].algebraic_notation
-                                        clean_san = san_string.replace("+", "").replace("#", "")
-                                        ONLINE_CONNECTION.send_message("MOVE", clean_san)
                             else:
                                 picking_piece = None  # that's how I want it to be
 
@@ -5795,7 +5469,7 @@ def main():
             game_over_btn_rect = None
 
         # ==========================================
-        # THE AI OR THE NETWORK'S TURN
+        # THE AI'S TURN
         # ==========================================
         if not is_paused and game_over_btn_rect is None:
             if ai_color is not None and BOARD.active_color == ai_color:
@@ -5816,42 +5490,6 @@ def main():
 
                     # 3. Reset the stopwatch for the next turn
                     ai_thinking_timer = 0
-
-            #network
-
-            elif ONLINE_CONNECTION is not None and not is_paused and game_over_btn_rect is None:
-                # We ALWAYS check the mailbox now, because the server might tell us our flag fell!
-                tag, payload = ONLINE_CONNECTION.peek_mailbox()
-
-                if tag:
-                    if tag == "MOVE":
-                        # Only apply the move if it's NOT our turn (sanity check)
-                        if BOARD.active_color.value.upper() != ONLINE_CONNECTION.color.upper():
-                            enemy_move = get_move_from_san(BOARD, payload)
-                            if enemy_move:
-                                moving_piece = BOARD.get_piece_at(enemy_move.from_pos)
-                                animate_move(moving_piece, enemy_move.from_pos, enemy_move.to_pos)
-                                BOARD.execute_move(enemy_move)
-
-                    elif tag == "FLAG" or tag == "RESIGN":
-                        # Payload is the color ("White" or "Black"). The server decides who lost!
-                        loser_color = ChessColor.WHITE if payload == "White" else ChessColor.BLACK
-                        PLAYERS[loser_color].lost = True
-
-                    elif tag == "DRAW_OFFER":
-                        # The enemy handed us a note. Mark it on the board!
-                        BOARD.draw_offered_by = ChessColor.WHITE if payload == "White" else ChessColor.BLACK
-                        print(f"[NETWORK] {payload} offered a draw.")
-
-                    elif tag == "DRAW":
-                        # The server declared the game a draw!
-                        BOARD.is_draw = True
-                        print("[NETWORK] Match ended in a draw.")
-
-                    elif tag == "OPPONENT_DISCONNECTED":
-                        print("[NETWORK] Opponent disconnected! Do not close the window, they can reconnect.")
-
-
 
         pygame.display.flip()
         pygame_clock.tick(FPS)
