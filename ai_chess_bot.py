@@ -12,3 +12,4 @@ CHESS_PIECES = {
 
 
 class AiBoard:
+    pass
