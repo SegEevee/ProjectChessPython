@@ -1081,6 +1081,9 @@ class ChessPiece:
     def __repr__(self):
         return f"{self.color.value} {self.type.name} @ {self.position}"
 
+    def __str__(self):
+        return f"{self.type.name[0]}{self.color.value[0]}"
+
     def __bool__(self):
         return self.position is not None
 
@@ -1373,7 +1376,7 @@ class Board:
         self.grid = [[None for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
         self.move_log.clear()
 
-    def load_fen(self, fen: str):
+    def actual_load_fen(self, fen: str):
         self.clear()
 
         parts = fen.strip().split()
@@ -1396,6 +1399,9 @@ class Board:
         self.en_passant = None if en_passant_str == '-' else SquarePosition(notation=en_passant_str)
         self.halfmove_clock = int(halfmove)
         self.fullmove_number = int(fullmove)
+
+    def load_fen(self, fen: str):
+        self.actual_load_fen(fen)
 
         self.update_game_state()
 
@@ -1899,6 +1905,20 @@ class Board:
                 p.update_all_legal_moves(self)
 
         return True
+
+
+    def print_board(self):
+        for i in range(8):
+            s = ""
+            pieces = self.grid[i]
+            for piece in pieces:
+                if piece is None:
+                    a = "  "
+                else:
+                    a = str(piece)
+                s += f"{a}|"
+            print(s)
+            print("-"*24)
 
 
 
