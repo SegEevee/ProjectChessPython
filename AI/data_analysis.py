@@ -8,7 +8,7 @@ def main():
 
 
   file_path = "lichess_db_eval.jsonl.zst"
-  max_records = 1000  # Change this to however many rows you want
+  max_records = 1000
   subset = []
 
   with open(file_path, "rb") as fh:
@@ -23,13 +23,28 @@ def main():
 
   print(f"Loaded {len(subset)} records")
 
-  data = subset[0]
-  add = "KQkq "
-  pos = str(data['fen']) + " 0 1"
-  print(pos) #  r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 3
-  b = Board()
-  b.actual_load_fen(pos)
-  b.print_board()
+  def prepare_pos(index):
+    data = subset[index]
+    return str(data['fen']) + " 0 1"
+
+  index = 11
+
+  print(prepare_pos(index))
+
+  data = subset[index]
+  evals = data['evals']
+
+  sum_depths = 0
+  for eval in evals:
+    print(eval)
+    scores = eval['pvs']
+    best_score = scores[0]['cp']
+    depth = eval['depth']
+    sum_depths += depth
+
+
+
+
 
 if __name__ == "__main__":
   main()
